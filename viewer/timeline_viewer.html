@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Trace Timeline Viewer</title>
+  <style>
+    body { font-family: sans-serif; margin: 20px; }
+    #viewer { text-align: center; margin-top: 15px; }
+    .controls { margin: 10px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .metadata { margin-top: 20px; font-size: 14px; }
+    table { border-collapse: collapse; margin: auto; }
+    th, td { border: 1px solid #ccc; padding: 6px 10px; }
+    th { background: #f0f0f0; }
+    .status-new { color: green; font-weight: bold; }
+    .status-reassigned { color: blue; font-weight: bold; }
+    .status-deleted { color: red; font-weight: bold; }
+    .status-other { color: gray; }
+    svg, object { max-width: 100%; height: auto; border: 1px solid #ccc; }
+    #compareContainer { margin-top: 12px; }
+    #runsMulti { display: flex; gap: 8px; flex-wrap: wrap; max-width: 100%; }
+    .muted { color: #666; font-size: 13px; }
+    #errorMsg { color: red; margin-top: 10px; }
+    button[disabled], input[disabled], select[disabled] { opacity: 0.6; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <h1>Trace Timeline Viewer</h1>
+
+  <div class="controls">
+    <label for="runSelect"><strong>Run</strong></label>
+    <select id="runSelect" onchange="changeRun(this.value)"></select>
+
+    <label style="margin-left:6px"><input type="checkbox" id="compareMode" onchange="toggleCompareMode()"> <strong>Compare runs</strong></label>
+    <div id="compareContainer">
+      <div id="runsMulti"></div>
+    </div>
+
+    <button onclick="closeViewer()" title="Send shutdown then attempt to close window">Close viewer</button>
+  </div>
+
+  <div class="controls">
+    <button onclick="prevStep()" id="prevBtn">Prev</button>
+    <input type="range" id="stepSlider" min="0" max="0" value="0" oninput="showStep(parseInt(this.value))">
+    <button onclick="nextStep()" id="nextBtn">Next</button>
+    <span id="stepLabel" style="min-width:240px; display:inline-block"></span>
+  </div>
+
+  <div class="controls">
+    <label for="stepInput">Jump to step</label>
+    <input type="number" id="stepInput" min="0" value="0" onkeydown="if(event.key==='Enter'){jumpToStep()}">
+    <button onclick="jumpToStep()">Go</button>
+
+    <button id="playPauseBtn" onclick="togglePlay()">▶ Play</button>
+    <label for="intervalInput">Interval ms</label>
+    <input type="number" id="intervalInput" value="1000" min="100" step="100" style="width:90px">
+  </div>
+
+  <div id="viewer"></div>
+
+  <details open>
+    <summary>Variables at this step</summary>
+    <div class="metadata" id="metadata"></div>
+  </details>
+
+  <div id="errorMsg" role="alert" aria-live="polite"></div>
+
+  <script type="module">
+    import { resolveLatestPath } from '/viewer/js/resolveLatest.js';
+
+    // Base outputs URL served by your static server; keep as root-relative URL
+    // The JS resolver will check /outputs/latest/ then /outputs/latest.txt and return the folder name to use.
+    let OUTPUTS_BASE = "/outputs";
+    const RUNS_JSON_DEFAULT = () => `${OUTPUTS_BASE}/runs.json`;
+
+    // runtime state
+    let timeline = [];
+    let current = 0;
+    let currentRun = null;
+    let runs = [];
+    let playing = false;
+    let playInterval = null;
+    let compareMode = false;
+    let selectedRunIds = [];
+
+    function showError(msg) {
+      console.warn(msg);
+      const el = document.getElementById("errorMsg");
+      el.textContent = msg || "";
+      if (msg) setTimeout(()=>{ if(el.textContent===msg) el.textContent = ""; }, 8000);
+    }
+
+    async function fetchJsonWithRetry(url, tries = 6, delayMs = 250) {
+      for (let attempt = 1; attempt <= tries; attempt++) {
+        try {
+          const res = await fetch(url, { cache: "no-store" });
+          if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+          const txt = await res.text();
+          try {
+            return JSON.parse(txt);
+          } catch (pe) {
+            throw new Error("JSON parse error: " + pe.message + " (body length " + txt.length + ")");
+          }
+        } catch (err) {
+          if (attempt === tries) throw err;
+          await new Promise(r => setTimeout(r, delayMs));
+        }
+      }
+    }
+
+    async function listRuns() {
+      disableControls(true);
+      try {
+        const raw = await fetchJsonWithRetry(RUNS_JSON_DEFAULT(), 6, 250);
+        runs = raw.map(item => {
+          if (typeof item === "string") return {id: item, folder: item, ts: null, label: item};
+          const id = item.id || item.folder || JSON.stringify(item);
+          const folder = item.folder || item.id || id;
+          const ts = item.ts || item.time || null;
+          const label = item.label || id;
+          return {id, folder, ts, label};
+        });
+        if (runs.length === 0) { showError("No runs found in runs.json"); populateRunSelect([]); disableControls(false); return; }
+        runs.sort((a,b)=> (b.ts||0)-(a.ts||0));
+        populateRunSelect(runs);
+        currentRun = runs[0];
+        document.getElementById("runSelect").value = currentRun.id;
+        selectedRunIds = [currentRun.id];
+        await loadTimelineForCurrentRun();
+      } catch (err) {
+        console.error("listRuns error:", err);
+        showError("Error loading runs.json. Check path and format. See console for details.");
+      } finally {
+        disableControls(false);
+      }
+    }
+
+    function populateRunSelect(runObjs) {
+      const select = document.getElementById("runSelect");
+      select.innerHTML = "";
+      runObjs.forEach(r => {
+        const opt = document.createElement("option");
+        opt.value = r.id;
+        opt.textContent = r.label;
+        select.appendChild(opt);
+      });
+      renderRunsMulti();
+    }
+
+    function renderRunsMulti() {
+      const container = document.getElementById("runsMulti");
+      container.innerHTML = "";
+      runs.forEach(r => {
+        const label = document.createElement("label");
+        label.style.display = "inline-flex";
+        label.style.alignItems = "center";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.value = r.id;
+        cb.checked = selectedRunIds.includes(r.id);
+        cb.onchange = onCompareCheckboxChange;
+        cb.disabled = !compareMode;
+        label.appendChild(cb);
+        const txt = document.createTextNode(" " + r.label);
+        label.appendChild(txt);
+        container.appendChild(label);
+      });
+    }
+
+    function onCompareCheckboxChange(e) {
+      const id = e.target.value;
+      if (e.target.checked) {
+        if (!selectedRunIds.includes(id)) selectedRunIds.push(id);
+      } else {
+        selectedRunIds = selectedRunIds.filter(x => x !== id);
+      }
+      if (compareMode && selectedRunIds.length > 0) {
+        const primary = runs.find(r => r.id === selectedRunIds[0]);
+        if (primary) {
+          currentRun = primary;
+          loadTimelineForCurrentRun();
+        }
+      }
+    }
+
+    async function loadTimelineForCurrentRun() {
+      if (!currentRun) { showError("No run selected"); return; }
+      disableControls(true);
+      try {
+        const timelinePath = `${OUTPUTS_BASE}/${currentRun.folder}/logs/timeline.json`;
+        const data = await fetchJsonWithRetry(timelinePath, 6, 250);
+        if (!Array.isArray(data)) throw new Error("timeline.json must be an array");
+        timeline = data;
+        document.getElementById("stepSlider").max = Math.max(0, timeline.length -1);
+        document.getElementById("stepInput").max = Math.max(0, timeline.length -1);
+        showStep(0);
+      } catch (err) {
+        console.error("loadTimelineForCurrentRun error:", err);
+        showError("Error loading timeline.json for selected run. See console for details.");
+        timeline = [];
+        document.getElementById("stepSlider").max = 0;
+        document.getElementById("stepInput").max = 0;
+        document.getElementById("viewer").innerHTML = "";
+        document.getElementById("metadata").innerHTML = "";
+      } finally {
+        disableControls(false);
+      }
+    }
+
+    function disableControls(disable) {
+      const els = document.querySelectorAll("button, input, select");
+      els.forEach(el => {
+        if (el.id === "playPauseBtn") return;
+        el.disabled = disable;
+      });
+    }
+
+    function renderMetadata(vars) {
+      if (!vars || Object.keys(vars).length === 0) return "<div class='muted'>No variables recorded for this step</div>";
+      let html = "<table><tr><th>Variable</th><th>Node</th><th>Label</th><th>Status</th></tr>";
+      for (const [varName, details] of Object.entries(vars)) {
+        const status = (details && details.status) ? details.status : "other";
+        let statusClass = "status-other";
+        if (status === "new") statusClass = "status-new";
+        else if (status === "reassigned") statusClass = "status-reassigned";
+        else if (status === "deleted") statusClass = "status-deleted";
+        const nodeId = details && details.node_id ? details.node_id : "";
+        const label = details && details.label ? details.label : "";
+        html += `<tr>
+                   <td>${escapeHtml(varName)}</td>
+                   <td>${escapeHtml(nodeId)}</td>
+                   <td>${escapeHtml(label)}</td>
+                   <td class="${statusClass}">${escapeHtml(status)}</td>
+                 </tr>`;
+      }
+      html += "</table>";
+      return html;
+    }
+
+    function escapeHtml(s) {
+      if (s === null || s === undefined) return "";
+      return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function showStep(i) {
+      if (!Array.isArray(timeline) || timeline.length === 0) return;
+      if (i < 0) i = 0;
+      if (i >= timeline.length) i = timeline.length - 1;
+      current = i;
+      const step = timeline[i];
+      const stepIdx = (step && typeof step.step !== "undefined") ? step.step : i;
+      const action = (step && step.action) ? step.action : "";
+      document.getElementById("stepLabel").innerText = `Step ${stepIdx}: ${action}`;
+      const svgPath = `${OUTPUTS_BASE}/${currentRun.folder}/snapshots/memory_trace_${stepIdx}.svg`;
+      document.getElementById("viewer").innerHTML =
+        `<object type="image/svg+xml" data="${svgPath}" aria-label="Memory snapshot for step ${stepIdx}"></object>`;
+      document.getElementById("metadata").innerHTML = renderMetadata(step && step.variables ? step.variables : {});
+      document.getElementById("stepSlider").value = i;
+      document.getElementById("stepInput").value = i;
+      if (compareMode && selectedRunIds.length > 1) {
+        updateCompareSnapshots(stepIdx);
+      }
+    }
+
+    function updateCompareSnapshots(stepIndex) {
+      const containerId = "compareSnapshots";
+      let container = document.getElementById(containerId);
+      if (!container) {
+        container = document.createElement("div");
+        container.id = containerId;
+        container.style.display = "flex";
+        container.style.gap = "8px";
+        container.style.justifyContent = "center";
+        container.style.marginTop = "12px";
+        document.getElementById("viewer").appendChild(container);
+      } else {
+        container.innerHTML = "";
+      }
+      selectedRunIds.forEach(id => {
+        const run = runs.find(r => r.id === id);
+        if (!run) return;
+        const wrapper = document.createElement("div");
+        wrapper.style.flex = "1 1 200px";
+        wrapper.style.maxWidth = "33%";
+        const title = document.createElement("div");
+        title.style.fontSize = "12px";
+        title.style.marginBottom = "6px";
+        title.textContent = run.label;
+        const obj = document.createElement("object");
+        obj.type = "image/svg+xml";
+        obj.data = `${OUTPUTS_BASE}/${run.folder}/snapshots/memory_trace_${stepIndex}.svg`;
+        obj.style.width = "100%";
+        obj.style.border = "1px solid #ddd";
+        wrapper.appendChild(title);
+        wrapper.appendChild(obj);
+        container.appendChild(wrapper);
+      });
+    }
+
+    function prevStep() { showStep(current - 1); }
+    function nextStep() { showStep(current + 1); }
+
+    function changeRun(runId) {
+      stopPlay();
+      const run = runs.find(r => r.id === runId);
+      if (!run) { showError("Selected run not found"); return; }
+      currentRun = run;
+      selectedRunIds = [run.id];
+      renderRunsMulti();
+      loadTimelineForCurrentRun();
+    }
+
+    function jumpToStep() {
+      const input = document.getElementById("stepInput");
+      let stepNum = parseInt(input.value);
+      if (isNaN(stepNum)) return;
+      let idx = timeline.findIndex(s => (s.step === stepNum || s.index === stepNum));
+      if (idx === -1) idx = stepNum;
+      showStep(idx);
+    }
+
+    function togglePlay() {
+      if (playing) stopPlay(); else startPlay();
+    }
+
+    function startPlay() {
+      if (!Array.isArray(timeline) || timeline.length === 0) return;
+      playing = true;
+      document.getElementById("playPauseBtn").innerText = "⏸ Pause";
+      const interval = Math.max(100, parseInt(document.getElementById("intervalInput").value) || 1000);
+      playInterval = setInterval(() => {
+        if (current < timeline.length - 1) showStep(current + 1);
+        else stopPlay();
+      }, interval);
+    }
+
+    function stopPlay() {
+      playing = false;
+      document.getElementById("playPauseBtn").innerText = "▶ Play";
+      if (playInterval) { clearInterval(playInterval); playInterval = null; }
+    }
+
+    function toggleCompareMode() {
+      compareMode = document.getElementById("compareMode").checked;
+      if (compareMode) {
+        if (selectedRunIds.length === 0 && runs.length > 0) selectedRunIds = [runs[0].id];
+        if (selectedRunIds.length === 1 && runs.length > 1) selectedRunIds.push(runs[1].id);
+      } else {
+        selectedRunIds = selectedRunIds.slice(0,1);
+      }
+      renderRunsMulti();
+      showStep(current);
+    }
+
+    function sendShutdownBeacon() {
+      const url = "/shutdown";
+      try {
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(url, "");
+          return true;
+        }
+      } catch(e) {}
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", url, false);
+        xhr.send(null);
+        return true;
+      } catch(e) {}
+      return false;
+    }
+
+    window.addEventListener("unload", () => { sendShutdownBeacon(); });
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") sendShutdownBeacon(); });
+
+    function closeViewer() {
+      try { fetch("/shutdown", {method: "POST", keepalive: true}).catch(()=>{}); } catch(e) {}
+      try { navigator.sendBeacon("/shutdown", ""); } catch(e){}
+      try { window.close(); } catch(e) {}
+    }
+
+    // Bootstrap: resolve which outputs folder to use for "latest" then list runs.
+    document.addEventListener("DOMContentLoaded", async () => {
+      try {
+        // resolveLatestPath will return "latest" or a specific run folder name from latest.txt
+        const resolved = await resolveLatestPath("/outputs");
+        OUTPUTS_BASE = "/outputs";
+        // if resolved is not "latest", we prefer using /outputs/<resolved> as base when building runs.json path
+        // keep RUNS_JSON at /outputs/runs.json; the resolver only affects which folder is used for "latest" references
+        // (timeline loader reads runs.json which contains canonical run entries)
+        console.info("Resolved latest pointer:", resolved);
+      } catch (e) {
+        console.info("Could not resolve latest pointer, using defaults", e);
+      }
+      listRuns();
+    });
+  </script>
+</body>
+</html>
+```
