@@ -11,7 +11,6 @@ on:
 jobs:
   smoke-windows:
     runs-on: windows-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,12 +46,9 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Starting http.server with Start-Process (python on PATH)"
-          # show python location for debugging
           Get-Command python
-          # Start process by calling 'python' (relies on setup-python placing it on PATH)
           Start-Process -NoNewWindow -FilePath python -ArgumentList "-m","http.server","8000"
           Start-Sleep -Seconds 2
-          # verify server started (list processes)
           Get-Process python -ErrorAction SilentlyContinue || Write-Host "python process not found"
 
       - name: Alternative: Start static server as background job (fallback)
@@ -68,8 +64,8 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Running smoke test command"
-          # Replace the following with your real smoke test command and working directory
-          # Example if your test runner lives in src:
+          # Replace the following with your actual smoke test command and working directory
+          # Example:
           # pushd src
           # python trace_runner.py --smoke
           # popd
@@ -78,7 +74,6 @@ jobs:
       - name: Collect outputs
         shell: pwsh
         run: |
-          # Make sure outputs directory exists if your tests write artifacts there
           if (-Not (Test-Path outputs)) {
             Write-Host "No outputs directory found, creating empty outputs to avoid upload warnings"
             New-Item -ItemType Directory -Path outputs | Out-Null
