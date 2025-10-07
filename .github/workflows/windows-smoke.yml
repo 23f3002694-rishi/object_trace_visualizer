@@ -1,4 +1,3 @@
-# .github/workflows/windows-smoke.yml
 name: Windows smoke tests
 
 on:
@@ -11,6 +10,10 @@ on:
 jobs:
   smoke-windows:
     runs-on: windows-latest
+    env:
+      PATH: ${{ github.workspace }};${{ env:PATH }}
+      PYTHONUNBUFFERED: '1'
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -64,11 +67,6 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Running smoke test command"
-          # Replace the following with your actual smoke test command and working directory
-          # Example:
-          # pushd src
-          # python trace_runner.py --smoke
-          # popd
           python -c "print('replace with your smoke test command')"
 
       - name: Collect outputs
