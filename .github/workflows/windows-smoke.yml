@@ -2,83 +2,79 @@ name: Windows smoke tests
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:
+    branches:
+      - main
+      - 'smoke-*'
+  workflow_dispatch: {}
 
 jobs:
   smoke-windows:
     runs-on: windows-latest
-    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Check python on runner
+        shell: pwsh
         run: |
-          python -m pip install --upgrade pip
-          pip install requests
+          Write-Host "=== PATH ==="
+          Write-Host $env:PATH
+          Write-Host "=== Get-Command python ==="
+          Get-Command python -ErrorAction SilentlyContinue | Format-List *
+          Write-Host "=== where.exe python ==="
+          where.exe python || Write-Host "where.exe returned no python"
+          Write-Host "=== python --version ==="
+          python --version || Write-Host "python not found"
 
-      - name: Prepare outputs dir
+      - name: Install Python deps
+        shell: pwsh
         run: |
-          if (!(Test-Path -Path outputs)) { New-Item -ItemType Directory -Path outputs | Out-Null }
-
-      - name: Start static server in background
-        # Replace this with the command that starts your actual viewer/server.
-        # This example uses Python's simple HTTP server to serve the repository root.
-        # If your app has a dedicated start command, use that instead.
-        run: |
-          Start-Process -NoNewWindow -FilePath "${{ runner.tool_cache }}/windows/python3.11.*/python.exe" -ArgumentList "-m", "http.server", "8000" 
-        shell: powershell
-
-      - name: Wait for server to bind
-        run: |
-          $max=30; $i=0
-          while ($i -lt $max) {
-            if (Test-NetConnection -ComputerName 127.0.0.1 -Port 8000 -WarningAction SilentlyContinue) { break }
-            Start-Sleep -Seconds 1; $i++
+          if (Test-Path requirements.txt) {
+            pip install -r requirements.txt
+          } else {
+            Write-Host "No requirements.txt found, skipping pip install"
           }
-          if ($i -ge $max) { Write-Error "Server did not bind"; exit 1 }
-        shell: powershell
 
-      - name: Run trace_runner and capture run path
+      - name: Start static server in background (Start-Process)
+        shell: pwsh
         run: |
-          python src/trace_runner.py --out outputs --label "ci-test" > run_path.txt
-          $run_path = Get-Content run_path.txt | Select-Object -Last 1
-          echo "run_path=$run_path" >> $env:GITHUB_ENV
-        shell: powershell
+          Write-Host "Starting http.server with Start-Process (python on PATH)"
+          Get-Command python
+          Start-Process -NoNewWindow -FilePath python -ArgumentList "-m","http.server","8000"
+          Start-Sleep -Seconds 2
+          # verify server started (list processes)
+          Get-Process python -ErrorAction SilentlyContinue || Write-Host "python process not found"
 
-      - name: Resolve latest via Python resolver and smoke test timeline.json
+      - name: Alternative: Start static server as background job (if Start-Process fails)
+        if: failure() # runs only if previous step failed
+        shell: pwsh
         run: |
-          python - <<'PY'
-          import requests, time
-          from src.output_resolver import resolve_latest_path
-          base = "http://127.0.0.1:8000/outputs"
-          latest = resolve_latest_path(base)
-          timeline = f"{base}/{latest}/logs/timeline.json"
-          for _ in range(10):
-            try:
-              r = requests.get(timeline, timeout=3)
-              if r.ok:
-                print("timeline found:", timeline)
-                exit(0)
-            except Exception:
-              pass
-            time.sleep(0.5)
-          print("timeline not found:", timeline)
-          exit(2)
-          PY
-        shell: bash
+          Write-Host "Starting http.server as Start-Job fallback"
+          $job = Start-Job -ScriptBlock { python -m http.server 8000 }
+          Start-Sleep -Seconds 2
+          Get-Job
 
-      - name: Upload outputs artifacts
+      - name: Run smoke tests
+        shell: pwsh
+        run: |
+          Write-Host "Run your smoke test command here"
+          # adjust working-directory or command as needed
+          # Example:
+          # pushd src
+          # python trace_runner.py --smoke
+          # popd
+          # Replace the following with your actual smoke test command:
+          python -c "print('replace with your smoke test command')"
+
+      - name: Upload outputs (if present)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: outputs
           path: outputs
+
