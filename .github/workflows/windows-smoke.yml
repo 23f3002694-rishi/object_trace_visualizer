@@ -1,3 +1,4 @@
+# .github/workflows/windows-smoke.yml
 name: Windows smoke tests
 
 on:
@@ -10,6 +11,7 @@ on:
 jobs:
   smoke-windows:
     runs-on: windows-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,6 +37,7 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path requirements.txt) {
+            Write-Host "Found requirements.txt, installing"
             pip install -r requirements.txt
           } else {
             Write-Host "No requirements.txt found, skipping pip install"
@@ -44,17 +47,19 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Starting http.server with Start-Process (python on PATH)"
+          # show python location for debugging
           Get-Command python
+          # Start process by calling 'python' (relies on setup-python placing it on PATH)
           Start-Process -NoNewWindow -FilePath python -ArgumentList "-m","http.server","8000"
           Start-Sleep -Seconds 2
           # verify server started (list processes)
           Get-Process python -ErrorAction SilentlyContinue || Write-Host "python process not found"
 
-      - name: Alternative: Start static server as background job (if Start-Process fails)
-        if: failure() # runs only if previous step failed
+      - name: Alternative: Start static server as background job (fallback)
+        if: failure()
         shell: pwsh
         run: |
-          Write-Host "Starting http.server as Start-Job fallback"
+          Write-Host "Previous Start-Process step failed; trying Start-Job fallback"
           $job = Start-Job -ScriptBlock { python -m http.server 8000 }
           Start-Sleep -Seconds 2
           Get-Job
@@ -62,14 +67,25 @@ jobs:
       - name: Run smoke tests
         shell: pwsh
         run: |
-          Write-Host "Run your smoke test command here"
-          # adjust working-directory or command as needed
-          # Example:
+          Write-Host "Running smoke test command"
+          # Replace the following with your real smoke test command and working directory
+          # Example if your test runner lives in src:
           # pushd src
           # python trace_runner.py --smoke
           # popd
-          # Replace the following with your actual smoke test command:
           python -c "print('replace with your smoke test command')"
+
+      - name: Collect outputs
+        shell: pwsh
+        run: |
+          # Make sure outputs directory exists if your tests write artifacts there
+          if (-Not (Test-Path outputs)) {
+            Write-Host "No outputs directory found, creating empty outputs to avoid upload warnings"
+            New-Item -ItemType Directory -Path outputs | Out-Null
+          } else {
+            Write-Host "Outputs directory exists"
+          }
+        continue-on-error: true
 
       - name: Upload outputs (if present)
         if: always()
@@ -77,4 +93,3 @@ jobs:
         with:
           name: outputs
           path: outputs
-
