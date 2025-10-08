@@ -23,10 +23,10 @@ jobs:
           if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
             Write-Host "Installing Chocolatey"
             iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+            C:\Program Files\PowerShell\7;C:\ffmpeg\bin;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\JupyterLab;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Program Files\dotnet\;C:\Program Files\nodejs\;C:\Program Files\PowerShell\7\;C:\Program Files\Graphviz\bin;C:\Program Files\Git\cmd;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Users\RaazRishi\AppData\Roaming\npm;C:\Users\RaazRishi\AppData\Local\Programs\Microsoft VS Code\bin += ";C:\ProgramData\chocolatey\bin"
           } else {
             Write-Host "Chocolatey already installed"
           }
-          choco feature enable -n showDownloadProgress || Write-Host "enable feature failed"
           choco install ffmpeg -y --no-progress
 
       - name: Setup Python
@@ -37,12 +37,30 @@ jobs:
       - name: Check python and ffmpeg on runner
         shell: pwsh
         run: |
-          Write-Host "=== PATH ==="
+          Write-Host "=== PATH (before) ==="
           Write-Host C:\Program Files\PowerShell\7;C:\ffmpeg\bin;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\JupyterLab;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Program Files\dotnet\;C:\Program Files\nodejs\;C:\Program Files\PowerShell\7\;C:\Program Files\Graphviz\bin;C:\Program Files\Git\cmd;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Users\RaazRishi\AppData\Roaming\npm;C:\Users\RaazRishi\AppData\Local\Programs\Microsoft VS Code\bin
+
+          if (Test-Path 'C:\ffmpeg\bin') {
+            Write-Host "Adding C:\ffmpeg\bin to PATH via GITHUB_PATH"
+            Add-Content -Path  -Value 'C:\ffmpeg\bin'
+          } elseif (Test-Path "C:\Program Files\ffmpeg\bin") {
+            Add-Content -Path  -Value "C:\Program Files\ffmpeg\bin"
+          } else {
+            Write-Host "ffmpeg not found at expected locations"
+          }
+
+          Write-Host "=== PATH (after) ==="
+          Write-Host C:\Program Files\PowerShell\7;C:\ffmpeg\bin;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\JupyterLab;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Program Files\dotnet\;C:\Program Files\nodejs\;C:\Program Files\PowerShell\7\;C:\Program Files\Graphviz\bin;C:\Program Files\Git\cmd;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Users\RaazRishi\AppData\Roaming\npm;C:\Users\RaazRishi\AppData\Local\Programs\Microsoft VS Code\bin
+
           Write-Host "=== python --version ==="
           python --version
-          Write-Host "=== ffmpeg version ==="
-          ffmpeg -version
+
+          Write-Host "=== ffmpeg -version (if available) ==="
+          if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+            ffmpeg -version
+          } else {
+            Write-Host "ffmpeg not available in PATH"
+          }
 
       - name: Install Python deps if present
         shell: pwsh
