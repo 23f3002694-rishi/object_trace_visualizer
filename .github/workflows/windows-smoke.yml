@@ -16,20 +16,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Chocolatey (if needed) and ffmpeg
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+            Write-Host "Installing Chocolatey"
+            iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+          } else {
+            Write-Host "Chocolatey already installed"
+          }
+          choco feature enable -n showDownloadProgress || Write-Host "enable feature failed"
+          choco install ffmpeg -y --no-progress
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      - name: Check python on runner
+      - name: Check python and ffmpeg on runner
         shell: pwsh
         run: |
           Write-Host "=== PATH ==="
           Write-Host C:\Program Files\PowerShell\7;C:\ffmpeg\bin;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\JupyterLab;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Program Files\dotnet\;C:\Program Files\nodejs\;C:\Program Files\PowerShell\7\;C:\Program Files\Graphviz\bin;C:\Program Files\Git\cmd;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Users\RaazRishi\AppData\Roaming\npm;C:\Users\RaazRishi\AppData\Local\Programs\Microsoft VS Code\bin
           Write-Host "=== python --version ==="
-          python --version || Write-Host "python not found"
+          python --version
+          Write-Host "=== ffmpeg version ==="
+          ffmpeg -version
 
-      - name: Install Python deps (if any)
+      - name: Install Python deps if present
         shell: pwsh
         run: |
           if (Test-Path requirements.txt) {
@@ -41,16 +56,30 @@ jobs:
       - name: Start static server in background
         shell: pwsh
         run: |
-          Write-Host "Starting http.server in background"
+          Write-Host "Starting http.server in background on port 8000"
           Start-Process -NoNewWindow -FilePath python -ArgumentList "-m","http.server","8000"
           Start-Sleep -Seconds 2
-          Get-Process python -ErrorAction SilentlyContinue || Write-Host "python process not found"
+          if (Get-Process python -ErrorAction SilentlyContinue) {
+            Write-Host "python process started"
+          } else {
+            Write-Host "python process not found"
+          }
 
       - name: Run smoke command
         shell: pwsh
         run: |
-          Write-Host "Smoke test placeholder"
+          Write-Host "Run placeholder smoke test"
           python -c "print('smoke test placeholder')"
+
+      - name: Optional ffmpeg task (safe guarded)
+        shell: pwsh
+        run: |
+          if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+            Write-Host "Running sample ffmpeg command"
+            ffmpeg -hide_banner -loglevel error -version
+          } else {
+            Write-Host "ffmpeg not found; skipping ffmpeg task"
+          }
 
       - name: Upload outputs (if any)
         if: always()
