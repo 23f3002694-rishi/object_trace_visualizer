@@ -17,35 +17,31 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Chocolatey (if needed) and ffmpeg
-  shell: pwsh
-  run: |
-    Set-ExecutionPolicy Bypass -Scope Process -Force
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+            Write-Host "Installing Chocolatey"
+            iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+            C:\Program Files\PowerShell\7;C:\ffmpeg\bin;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\JupyterLab;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Program Files\dotnet\;C:\Program Files\nodejs\;C:\Program Files\PowerShell\7\;C:\Program Files\Graphviz\bin;C:\Program Files\Git\cmd;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Users\RaazRishi\AppData\Roaming\npm;C:\Users\RaazRishi\AppData\Local\Programs\Microsoft VS Code\bin += ";C:\ProgramData\chocolatey\bin"
+          } else {
+            Write-Host "Chocolatey already installed"
+          }
+          choco install ffmpeg -y --no-progress
+           = @(
+            'C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin',
+            'C:\ffmpeg\bin',
+            "C:\Program Files\ffmpeg\bin"
+          )
+          foreach ( in ) {
+            if (Test-Path ) {
+              Add-Content -Path  -Value 
+              Write-Host "Added to GITHUB_PATH: "
+              break
+            }
+          }
 
-    if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
-      Write-Host "Installing Chocolatey"
-      iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-      $env:PATH += ";$env:ALLUSERSPROFILE\chocolatey\bin"
-    } else {
-      Write-Host "Chocolatey already installed"
-    }
-
-    choco install ffmpeg -y --no-progress
-
-    $ffmpegCandidates = @(
-      'C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin',
-      'C:\ffmpeg\bin',
-      "$env:ProgramFiles\ffmpeg\bin"
-    )
-
-    foreach ($p in $ffmpegCandidates) {
-      if (Test-Path $p) {
-        Write-Host "Found ffmpeg at: $p ; adding to GITHUB_PATH"
-        Add-Content -Path $env:GITHUB_PATH -Value $p
-        break
-      }
-    }
-
-- name: Setup Python
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
