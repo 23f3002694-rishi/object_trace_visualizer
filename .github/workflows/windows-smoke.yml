@@ -4,14 +4,12 @@ on:
   push:
     branches:
       - main
-      - 'smoke-*'
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 jobs:
   smoke-windows:
     runs-on: windows-latest
     env:
-      PATH: ${{ github.workspace }};${{ env:PATH }}
       PYTHONUNBUFFERED: '1'
 
     steps:
@@ -27,60 +25,34 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "=== PATH ==="
-          Write-Host $env:PATH
-          Write-Host "=== Get-Command python ==="
-          Get-Command python -ErrorAction SilentlyContinue | Format-List *
-          Write-Host "=== where.exe python ==="
-          where.exe python || Write-Host "where.exe returned no python"
+          Write-Host C:\Program Files\PowerShell\7;C:\ffmpeg\bin;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\JupyterLab;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Program Files\dotnet\;C:\Program Files\nodejs\;C:\Program Files\PowerShell\7\;C:\Program Files\Graphviz\bin;C:\Program Files\Git\cmd;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Users\RaazRishi\AppData\Roaming\npm;C:\Users\RaazRishi\AppData\Local\Programs\Microsoft VS Code\bin
           Write-Host "=== python --version ==="
           python --version || Write-Host "python not found"
 
-      - name: Install Python deps
+      - name: Install Python deps (if any)
         shell: pwsh
         run: |
           if (Test-Path requirements.txt) {
-            Write-Host "Found requirements.txt, installing"
             pip install -r requirements.txt
           } else {
-            Write-Host "No requirements.txt found, skipping pip install"
+            Write-Host "No requirements.txt"
           }
 
-      - name: Start static server in background (Start-Process)
+      - name: Start static server in background
         shell: pwsh
         run: |
-          Write-Host "Starting http.server with Start-Process (python on PATH)"
-          Get-Command python
+          Write-Host "Starting http.server in background"
           Start-Process -NoNewWindow -FilePath python -ArgumentList "-m","http.server","8000"
           Start-Sleep -Seconds 2
           Get-Process python -ErrorAction SilentlyContinue || Write-Host "python process not found"
 
-      - name: Alternative: Start static server as background job (fallback)
-        if: failure()
+      - name: Run smoke command
         shell: pwsh
         run: |
-          Write-Host "Previous Start-Process step failed; trying Start-Job fallback"
-          $job = Start-Job -ScriptBlock { python -m http.server 8000 }
-          Start-Sleep -Seconds 2
-          Get-Job
+          Write-Host "Smoke test placeholder"
+          python -c "print('smoke test placeholder')"
 
-      - name: Run smoke tests
-        shell: pwsh
-        run: |
-          Write-Host "Running smoke test command"
-          python -c "print('replace with your smoke test command')"
-
-      - name: Collect outputs
-        shell: pwsh
-        run: |
-          if (-Not (Test-Path outputs)) {
-            Write-Host "No outputs directory found, creating empty outputs to avoid upload warnings"
-            New-Item -ItemType Directory -Path outputs | Out-Null
-          } else {
-            Write-Host "Outputs directory exists"
-          }
-        continue-on-error: true
-
-      - name: Upload outputs (if present)
+      - name: Upload outputs (if any)
         if: always()
         uses: actions/upload-artifact@v4
         with:
