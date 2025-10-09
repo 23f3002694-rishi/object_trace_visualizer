@@ -16,30 +16,53 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Chocolatey (if needed) and ffmpeg
+      - name: Ensure Chocolatey and ffmpeg (robust on Windows)
         shell: pwsh
         run: |
-          Set-ExecutionPolicy Bypass -Scope Process -Force
-          if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
-            Write-Host "Installing Chocolatey"
-            iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-            C:\Program Files\PowerShell\7;C:\ffmpeg\bin;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\JupyterLab;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Program Files\dotnet\;C:\Program Files\nodejs\;C:\Program Files\PowerShell\7\;C:\Program Files\Graphviz\bin;C:\Program Files\Git\cmd;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Users\RaazRishi\AppData\Roaming\npm;C:\Users\RaazRishi\AppData\Local\Programs\Microsoft VS Code\bin += ";C:\ProgramData\chocolatey\bin"
+          # download installer to disk and execute with Windows PowerShell to avoid pwsh ephemeral-script parsing issues
+          $installer = "$env:TEMP\choco_install.ps1"
+          Invoke-WebRequest -Uri 'https://community.chocolatey.org/install.ps1' -OutFile $installer -UseBasicParsing
+          & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -ExecutionPolicy Bypass -File $installer
+
+          # ensure choco is present and update PATH for this job process
+          if (Test-Path "$env:ALLUSERSPROFILE\chocolatey\bin\choco.exe") {
+            $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
           } else {
-            Write-Host "Chocolatey already installed"
+            Write-Error "Chocolatey installation did not produce choco.exe on expected path"
+            exit 1
           }
-          choco install ffmpeg -y --no-progress
-           = @(
-            'C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin',
-            'C:\ffmpeg\bin',
-            "C:\Program Files\ffmpeg\bin"
-          )
-          foreach ( in ) {
-            if (Test-Path ) {
-              Add-Content -Path  -Value 
-              Write-Host "Added to GITHUB_PATH: "
-              break
+
+      - name: Install ffmpeg with retries
+        shell: pwsh
+        run: |
+          $maxRetries = 3
+          for ($i = 1; $i -le $maxRetries; $i++) {
+            try {
+              & choco install ffmpeg -y --no-progress
+              $chocoBin = "$env:ALLUSERSPROFILE\chocolatey\bin"
+              if (-not ($env:Path -split ';' | Where-Object { $_ -eq $chocoBin })) {
+                $env:Path = "$chocoBin;$env:Path"
+              }
+              if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+                Write-Host "ffmpeg installed"
+                break
+              }
+              throw "ffmpeg not found after install"
+            } catch {
+              Write-Host "ffmpeg install attempt $i failed: $($_.Exception.Message)"
+              if ($i -eq $maxRetries) { throw }
+              Start-Sleep -Seconds (5 * $i)
             }
           }
+
+      - name: Verify ffmpeg
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+            Write-Error "ffmpeg not available on PATH"
+            exit 1
+          }
+          ffmpeg -version
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -49,8 +72,6 @@ jobs:
       - name: Check python and ffmpeg on runner
         shell: pwsh
         run: |
-          Write-Host "=== PATH (sample) ==="
-          Write-Host C:\Program Files\PowerShell\7;C:\ffmpeg\bin;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\JupyterLab;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Program Files\dotnet\;C:\Program Files\nodejs\;C:\Program Files\PowerShell\7\;C:\Program Files\Graphviz\bin;C:\Program Files\Git\cmd;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Users\RaazRishi\AppData\Roaming\npm;C:\Users\RaazRishi\AppData\Local\Programs\Microsoft VS Code\bin
           Write-Host "=== python --version ==="
           python --version
           Write-Host "=== ffmpeg -version (if available) ==="
