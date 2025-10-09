@@ -94,7 +94,7 @@ jobs:
               Where-Object { $_ -ne '' }
             if ($lines.Count -gt 0) {
               $lines | Set-Content -Path $tempReq -Encoding UTF8
-              Write-Host "Installing $($lines.Count) Python packages"
+              Write-Host "Installing Python packages from requirements"
               python -m pip install --upgrade pip
               python -m pip install -r $tempReq
             }
@@ -116,16 +116,17 @@ jobs:
       - name: Run smoke tests
         shell: pwsh
         run: |
-          python -c "print('✓ Python OK')"
+          Write-Host "Running smoke tests"
+          python -c "print('Python execution test passed')"
           try {
-            Invoke-WebRequest http://localhost:8000 -UseBasicParsing -TimeoutSec 5
-            Write-Host "✓ HTTP OK"
+            Invoke-WebRequest http://localhost:8000 -UseBasicParsing -TimeoutSec 5 | Out-Null
+            Write-Host "HTTP server connectivity test passed"
           } catch {
-            Write-Warning "HTTP test failed"
+            Write-Warning "HTTP server test failed"
           }
           try {
-            ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=duration=1:size=320x240:rate=1 -f null -
-            Write-Host "✓ FFmpeg OK"
+            ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=duration=1:size=320x240:rate=1 -f null - | Out-Null
+            Write-Host "FFmpeg functionality test passed"
           } catch {
             Write-Warning "FFmpeg test failed"
           }
