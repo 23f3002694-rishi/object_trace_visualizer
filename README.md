@@ -1,12 +1,9 @@
-# Object Trace Visualizer Project 
-
 ## Reproduce Windows smoke CI locally
 
 Run the local CI helper (Windows PowerShell):
 
-`powershell
+```powershell
 .\tools\run-ci.ps1
-`
 
-This mirrors the GitHub Actions windows-smoke job: it creates a venv, installs pinned CI deps from ci/requirements.ci.txt, then runs tests.
+![Windows smoke tests](https://github.com/<OWNER>/<REPO>/actions/workflows/windows-smoke.yml/badge.svg?branch=main)
 
