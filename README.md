@@ -5,7 +5,7 @@ Run the local CI helper (Windows PowerShell):
 ```powershell
 .\tools\run-ci.ps1
 
-![Windows smoke tests](https://github.com/<OWNER>/<REPO>/actions/workflows/windows-smoke.yml/badge.svg?branch=main)
+![Windows smoke tests](https://github.com/23f3002694-rishi/object_trace_visualizer/actions/workflows/windows-smoke.yml/badge.svg?branch=main)
 
 
 If tests fail locally, run: python -m pytest tests -q
