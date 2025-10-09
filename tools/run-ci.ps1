@@ -24,3 +24,14 @@ if (Test-Path $Requirements) {
 # run tests (runs tests/ by default; also accepts -TestTarget to add other paths)
 python -m pytest tests $TestTarget -q
 
+# Python version guard
+$ciPinnedPython = '3.13'  # update to whatever CI uses
+try {
+  $localPy = python -c "import sys; print('.'.join(map(str, sys.version_info[:2])))"
+} catch {
+  Write-Warning "Unable to determine local Python version"
+  $localPy = ''
+}
+if ($localPy -and ($localPy -notlike "$ciPinnedPython*")) {
+  Write-Warning "Local Python version $localPy does not match CI pinned $ciPinnedPython. Proceeding, but consider using the CI Python version for parity."
+}
