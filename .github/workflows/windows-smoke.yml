@@ -10,36 +10,25 @@ jobs:
   smoke-windows:
     runs-on: windows-latest
     env:
-      # Ensures Python output appears immediately in the logs
       PYTHONUNBUFFERED: '1'
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # --- Dependency Installation (Fixed for path reliability) ---
-      
-      - name: Install FFmpeg using Chocolatey and Refresh Environment
-        shell: pwsh
-        run: |
-          Write-Host "Installing ffmpeg via choco..."
-          # Install ffmpeg.
-          choco install ffmpeg -y --no-progress
-          
-          # CRITICAL FIX: Chocolatey requires 'refreshenv' or a path update
-          # to register new executables within the current shell session.
-          Write-Host "Refreshing environment path..."
-          refreshenv
-          
+      # --- Best Practice: Use a dedicated action for FFmpeg ---
+      - name: Setup FFmpeg (Reliable Method)
+        # Replaces complex Chocolatey logic with a robust, platform-aware action
+        uses: wassimk/setup-ffmpeg@v1
+        with:
+          # You can specify a version if needed, otherwise it uses the latest stable version.
+          # version: '6.1'
+
       - name: Verify FFmpeg Installation
-        # This step will now use a fresh path cache thanks to 'refreshenv'
         shell: pwsh
         run: |
-          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { 
-            Write-Error "ffmpeg not available on PATH, failing build."; exit 1 
-          }
-          Write-Host "FFmpeg successfully installed and available."
-          ffmpeg -version # Should now execute successfully
+          Write-Host "FFmpeg successfully installed and available via setup-ffmpeg action."
+          ffmpeg -version # This is now guaranteed to work if the action succeeded.
 
       - name: Setup Python 3.11 and Cache Dependencies
         uses: actions/setup-python@v5
@@ -67,10 +56,10 @@ jobs:
       # --- Execution Steps ---
 
       - name: Start static server in background
-        # Save the process ID to a file for explicit cleanup later
         id: start_server
         shell: pwsh
         run: |
+          # Save the process ID to a file for explicit cleanup later
           $pidFile = "server_pid.txt"
           Write-Host "Starting http.server in background on port 8000"
           $process = Start-Process -NoNewWindow -PassThru -FilePath python -ArgumentList "-m","http.server","8000"
@@ -85,12 +74,8 @@ jobs:
       - name: Optional ffmpeg task
         shell: pwsh
         run: |
-          if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
-            Write-Host "Running final FFmpeg version check..."
-            ffmpeg -hide_banner -loglevel error -version
-          } else {
-            Write-Host "ffmpeg not found; skipping optional ffmpeg task"
-          }
+          # Now we can reliably use FFmpeg without an 'if' guard.
+          ffmpeg -hide_banner -loglevel error -version
 
       # --- Cleanup and Artifact Upload ---
       
