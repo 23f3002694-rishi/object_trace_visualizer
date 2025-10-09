@@ -19,17 +19,13 @@ jobs:
       - name: Ensure Chocolatey and ffmpeg (robust on Windows)
         shell: pwsh
         run: |
-          # download installer to disk and execute with Windows PowerShell to avoid pwsh ephemeral-script parsing issues
           $installer = "$env:TEMP\choco_install.ps1"
           Invoke-WebRequest -Uri 'https://community.chocolatey.org/install.ps1' -OutFile $installer -UseBasicParsing
           & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -ExecutionPolicy Bypass -File $installer
-
-          # ensure choco is present and update PATH for this job process
           if (Test-Path "$env:ALLUSERSPROFILE\chocolatey\bin\choco.exe") {
             $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
           } else {
-            Write-Error "Chocolatey installation did not produce choco.exe on expected path"
-            exit 1
+            Write-Error "Chocolatey installation did not produce choco.exe on expected path"; exit 1
           }
 
       - name: Install ffmpeg with retries
@@ -43,10 +39,7 @@ jobs:
               if (-not ($env:Path -split ';' | Where-Object { $_ -eq $chocoBin })) {
                 $env:Path = "$chocoBin;$env:Path"
               }
-              if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
-                Write-Host "ffmpeg installed"
-                break
-              }
+              if (Get-Command ffmpeg -ErrorAction SilentlyContinue) { Write-Host "ffmpeg installed"; break }
               throw "ffmpeg not found after install"
             } catch {
               Write-Host "ffmpeg install attempt $i failed: $($_.Exception.Message)"
@@ -58,10 +51,7 @@ jobs:
       - name: Verify ffmpeg
         shell: pwsh
         run: |
-          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-            Write-Error "ffmpeg not available on PATH"
-            exit 1
-          }
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { Write-Error "ffmpeg not available on PATH"; exit 1 }
           ffmpeg -version
 
       - name: Setup Python
