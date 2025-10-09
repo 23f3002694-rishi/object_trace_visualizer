@@ -7,3 +7,6 @@ Run the local CI helper (Windows PowerShell):
 
 ![Windows smoke tests](https://github.com/<OWNER>/<REPO>/actions/workflows/windows-smoke.yml/badge.svg?branch=main)
 
+
+If tests fail locally, run: python -m pytest tests -q
+
