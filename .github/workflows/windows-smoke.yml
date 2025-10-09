@@ -8,7 +8,6 @@ on:
 
 jobs:
   smoke-windows:
-    # Use a more specific job name if needed, but smoke-windows is fine.
     runs-on: windows-latest
     env:
       # Ensures Python output appears immediately in the logs
@@ -18,32 +17,36 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # --- Dependency Installation (Simplified and Robust) ---
+      # --- Dependency Installation (Fixed for path reliability) ---
       
-      - name: Install FFmpeg using Chocolatey
-        # Chocolatey is pre-installed on windows-latest, we just need to use it.
-        # Its bin directory is already in the environment path on the runner.
+      - name: Install FFmpeg using Chocolatey and Refresh Environment
         shell: pwsh
         run: |
           Write-Host "Installing ffmpeg via choco..."
-          # Install ffmpeg. We rely on the runner environment to handle retries/path setup.
+          # Install ffmpeg.
           choco install ffmpeg -y --no-progress
           
+          # CRITICAL FIX: Chocolatey requires 'refreshenv' or a path update
+          # to register new executables within the current shell session.
+          Write-Host "Refreshing environment path..."
+          refreshenv
+          
       - name: Verify FFmpeg Installation
+        # This step will now use a fresh path cache thanks to 'refreshenv'
         shell: pwsh
         run: |
           if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { 
-            Write-Error "ffmpeg not available on PATH"; exit 1 
+            Write-Error "ffmpeg not available on PATH, failing build."; exit 1 
           }
-          ffmpeg -version
+          Write-Host "FFmpeg successfully installed and available."
+          ffmpeg -version # Should now execute successfully
 
       - name: Setup Python 3.11 and Cache Dependencies
-        # Use actions/setup-python@v5 (recommended) and add caching for speed.
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
-          cache-dependency-path: requirements.txt # Caches based on the contents of this file
+          cache-dependency-path: requirements.txt
 
       # --- Python Setup and Dependencies ---
 
@@ -51,7 +54,6 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path requirements.txt) {
-            # Upgrade pip first (good practice) and install dependencies
             python -m pip install --upgrade pip
             python -m pip install -r requirements.txt
           } else {
@@ -60,7 +62,7 @@ jobs:
 
       - name: Create Output Directory
         shell: pwsh
-        run: New-Item -Path 'outputs' -ItemType Directory -Force # Ensure the directory exists for artifact upload
+        run: New-Item -Path 'outputs' -ItemType Directory -Force
 
       # --- Execution Steps ---
 
@@ -71,39 +73,38 @@ jobs:
         run: |
           $pidFile = "server_pid.txt"
           Write-Host "Starting http.server in background on port 8000"
-          # Start-Process with -PassThru returns the process object
           $process = Start-Process -NoNewWindow -PassThru -FilePath python -ArgumentList "-m","http.server","8000"
-          # Write the PID to the file
           $process.Id | Out-File -FilePath $pidFile -Encoding UTF8
           Start-Sleep -Seconds 2
 
       - name: Run smoke command
         shell: pwsh
         run: |
-          # Replace this placeholder with your actual smoke test command
           python -c "print('smoke test placeholder running...')"
 
       - name: Optional ffmpeg task
         shell: pwsh
         run: |
           if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+            Write-Host "Running final FFmpeg version check..."
             ffmpeg -hide_banner -loglevel error -version
           } else {
-            Write-Host "ffmpeg not found; skipping ffmpeg task"
+            Write-Host "ffmpeg not found; skipping optional ffmpeg task"
           }
 
       # --- Cleanup and Artifact Upload ---
       
       - name: Stop Background Server (Crucial Cleanup)
-        if: always() # Ensure this runs even if the smoke command fails
+        if: always()
         shell: pwsh
         run: |
           $pidFile = "server_pid.txt"
           if (Test-Path $pidFile) {
-            $pid = Get-Content $pidFile
-            Write-Host "Stopping server with PID: $pid"
-            # Use Stop-Process to terminate the server by its PID
-            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+            $pid = Get-Content $pidFile -ErrorAction SilentlyContinue
+            if ($pid -and $pid -as [int]) {
+              Write-Host "Stopping server with PID: $pid"
+              Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+            }
           }
       
       - name: Upload outputs (if any)
