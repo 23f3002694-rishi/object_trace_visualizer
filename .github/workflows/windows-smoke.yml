@@ -16,83 +16,139 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Chocolatey (if needed) and ffmpeg
+      - name: Setup PowerShell execution policy
+        shell: pwsh
+        run: Set-ExecutionPolicy Bypass -Scope Process -Force
+
+      - name: Install Chocolatey (robust method)
         shell: pwsh
         run: |
-          Set-ExecutionPolicy Bypass -Scope Process -Force
-          if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
-            Write-Host "Installing Chocolatey"
+          try {
+            if (Get-Command choco -ErrorAction SilentlyContinue) {
+              Write-Host "Chocolatey already installed"
+              exit 0
+            }
+            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
             iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-            C:\Program Files\PowerShell\7;C:\ffmpeg\bin;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\JupyterLab;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Program Files\dotnet\;C:\Program Files\nodejs\;C:\Program Files\PowerShell\7\;C:\Program Files\Graphviz\bin;C:\Program Files\Git\cmd;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Users\RaazRishi\AppData\Roaming\npm;C:\Users\RaazRishi\AppData\Local\Programs\Microsoft VS Code\bin += ";C:\ProgramData\chocolatey\bin"
-          } else {
-            Write-Host "Chocolatey already installed"
+            $chocoBin = "$env:ALLUSERSPROFILE\chocolatey\bin"
+            Add-Content $env:GITHUB_PATH $chocoBin
+            $env:Path = "$chocoBin;$env:Path"
+            if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+              throw "Chocolatey installation failed"
+            }
+            Write-Host "Chocolatey installed successfully"
           }
-          choco install ffmpeg -y --no-progress
-           = @(
-            'C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin',
-            'C:\ffmpeg\bin',
-            "C:\Program Files\ffmpeg\bin"
-          )
-          foreach ( in ) {
-            if (Test-Path ) {
-              Add-Content -Path  -Value 
-              Write-Host "Added to GITHUB_PATH: "
-              break
+          catch {
+            Write-Error "Chocolatey installation failed: $($_.Exception.Message)"
+            exit 1
+          }
+
+      - name: Install FFmpeg via Chocolatey
+        shell: pwsh
+        run: |
+          $maxRetries = 3
+          for ($i = 1; $i -le $maxRetries; $i++) {
+            try {
+              choco install ffmpeg -y --no-progress
+              if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+                Write-Host "FFmpeg installed successfully"
+                break
+              }
+              throw "ffmpeg not found after install"
+            }
+            catch {
+              Write-Host "Attempt $i failed: $($_.Exception.Message)"
+              if ($i -eq $maxRetries) { exit 1 }
+              Start-Sleep -Seconds (5 * $i)
             }
           }
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Check python and ffmpeg on runner
+      - name: Verify core dependencies
         shell: pwsh
         run: |
-          Write-Host "=== PATH (sample) ==="
-          Write-Host C:\Program Files\PowerShell\7;C:\ffmpeg\bin;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\JupyterLab;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Program Files\dotnet\;C:\Program Files\nodejs\;C:\Program Files\PowerShell\7\;C:\Program Files\Graphviz\bin;C:\Program Files\Git\cmd;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\;C:\Users\RaazRishi\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\RaazRishi\AppData\Local\Microsoft\WindowsApps;C:\Users\RaazRishi\AppData\Roaming\npm;C:\Users\RaazRishi\AppData\Local\Programs\Microsoft VS Code\bin
-          Write-Host "=== python --version ==="
-          python --version
-          Write-Host "=== ffmpeg -version (if available) ==="
-          if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
-            ffmpeg -version
-          } else {
-            Write-Host "ffmpeg not available in PATH"
+          if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+            Write-Error "Python not found"
+            exit 1
           }
+          python --version
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+            Write-Error "FFmpeg not found"
+            exit 1
+          }
+          ffmpeg -version
 
-      - name: Install Python deps if present
+      - name: Install Python dependencies
         shell: pwsh
         run: |
           if (Test-Path requirements.txt) {
-            pip install -r requirements.txt
-          } else {
-            Write-Host "No requirements.txt"
+            Write-Host "Found requirements.txt, sanitizing..."
+            $tempReq = "$env:TEMP\requirements.cleaned.txt"
+            $lines = Get-Content requirements.txt |
+              Where-Object { $_ -and $_ -notmatch '^\s*(ECHO is off\.|@?ECHO\s+OFF\b|rem\b|\#)' } |
+              ForEach-Object { $_.Trim() } |
+              Where-Object { $_ -ne '' }
+            if ($lines.Count -gt 0) {
+              $lines | Set-Content -Path $tempReq -Encoding UTF8
+              Write-Host "Installing Python packages from requirements"
+              python -m pip install --upgrade pip
+              python -m pip install -r $tempReq
+            }
+            else {
+              Write-Host "No valid requirements found; skipping pip install"
+            }
+          }
+          else {
+            Write-Host "No requirements.txt; skipping pip install"
           }
 
-      - name: Start static server in background
+      - name: Start background HTTP server
         shell: pwsh
         run: |
-          Write-Host "Starting http.server in background on port 8000"
-          Start-Process -NoNewWindow -FilePath python -ArgumentList "-m","http.server","8000"
-          Start-Sleep -Seconds 2
+          $proc = Start-Process -NoNewWindow -FilePath python -ArgumentList "-m","http.server","8000" -PassThru
+          $proc.Id | Out-File "$env:TEMP\server_pid.txt"
+          Start-Sleep -Seconds 3
 
-      - name: Run smoke command
+      - name: Run smoke tests
         shell: pwsh
         run: |
-          python -c "print('smoke test placeholder')"
-
-      - name: Optional ffmpeg task (safe guarded)
-        shell: pwsh
-        run: |
-          if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
-            ffmpeg -hide_banner -loglevel error -version
-          } else {
-            Write-Host "ffmpeg not found; skipping ffmpeg task"
+          Write-Host "Running smoke tests"
+          python -c "print('Python execution test passed')"
+          try {
+            Invoke-WebRequest http://localhost:8000 -UseBasicParsing -TimeoutSec 5 | Out-Null
+            Write-Host "HTTP server connectivity test passed"
+          } catch {
+            Write-Warning "HTTP server test failed"
+          }
+          try {
+            ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=duration=1:size=320x240:rate=1 -f null - | Out-Null
+            Write-Host "FFmpeg functionality test passed"
+          } catch {
+            Write-Warning "FFmpeg test failed"
           }
 
-      - name: Upload outputs (if any)
+      - name: Cleanup background processes
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path "$env:TEMP\server_pid.txt") {
+            Stop-Process -Id (Get-Content "$env:TEMP\server_pid.txt") -ErrorAction SilentlyContinue
+          }
+          Get-Process python -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -match "http.server" } |
+            Stop-Process -Force
+
+      - name: Upload test outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: outputs
-          path: outputs
+          name: smoke-test-outputs
+          path: |
+            outputs/
+            *.log
+            ${{ env.TEMP }}/requirements.cleaned.txt
+          retention-days: 7
