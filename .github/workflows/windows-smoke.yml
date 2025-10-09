@@ -86,15 +86,24 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path requirements.txt) {
+            Write-Host "Found requirements.txt, sanitizing..."
             $tempReq = "$env:TEMP\requirements.cleaned.txt"
-            Get-Content requirements.txt |
+            $lines = Get-Content requirements.txt |
               Where-Object { $_ -and $_ -notmatch '^\s*(ECHO is off\.|@?ECHO\s+OFF\b|rem\b|\#)' } |
               ForEach-Object { $_.Trim() } |
-              Set-Content $tempReq
-            if ((Get-Content $tempReq).Length -gt 0) {
+              Where-Object { $_ -ne '' }
+            if ($lines.Count -gt 0) {
+              $lines | Set-Content -Path $tempReq -Encoding UTF8
+              Write-Host "Installing $($lines.Count) Python packages"
               python -m pip install --upgrade pip
               python -m pip install -r $tempReq
             }
+            else {
+              Write-Host "No valid requirements found; skipping pip install"
+            }
+          }
+          else {
+            Write-Host "No requirements.txt; skipping pip install"
           }
 
       - name: Start background HTTP server
