@@ -31,7 +31,7 @@ jobs:
             [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
             iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
             $chocoBin = "$env:ALLUSERSPROFILE\chocolatey\bin"
-            Add-Content $env:GITHUB_PATH $chocoBin
+            Add-Content -Path $env:GITHUB_PATH -Value $chocoBin
             $env:Path = "$chocoBin;$env:Path"
             if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
               throw "Chocolatey installation failed"
@@ -46,10 +46,15 @@ jobs:
       - name: Install FFmpeg via Chocolatey
         shell: pwsh
         run: |
-          $maxRetries = 3
+          $maxRetries = 4
+          $chocoBin = "$env:ALLUSERSPROFILE\chocolatey\bin"
           for ($i = 1; $i -le $maxRetries; $i++) {
             try {
               choco install ffmpeg -y --no-progress
+              if (-not ($env:Path -split ';' | Where-Object { $_ -eq $chocoBin })) {
+                Add-Content -Path $env:GITHUB_PATH -Value $chocoBin
+                $env:Path = "$chocoBin;$env:Path"
+              }
               if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
                 Write-Host "FFmpeg installed successfully"
                 break
@@ -87,7 +92,7 @@ jobs:
         run: |
           if (Test-Path requirements.txt) {
             Write-Host "Found requirements.txt, sanitizing..."
-            $tempReq = "$env:TEMP\requirements.cleaned.txt"
+            $tempReq = Join-Path $env:RUNNER_TEMP "requirements.cleaned.txt"
             $lines = Get-Content requirements.txt |
               Where-Object { $_ -and $_ -notmatch '^\s*(ECHO is off\.|@?ECHO\s+OFF\b|rem\b|\#)' } |
               ForEach-Object { $_.Trim() } |
@@ -110,7 +115,7 @@ jobs:
         shell: pwsh
         run: |
           $proc = Start-Process -NoNewWindow -FilePath python -ArgumentList "-m","http.server","8000" -PassThru
-          $proc.Id | Out-File "$env:TEMP\server_pid.txt"
+          $proc.Id | Out-File (Join-Path $env:RUNNER_TEMP "server_pid.txt") -Encoding ascii
           Start-Sleep -Seconds 3
 
       - name: Run smoke tests
@@ -135,12 +140,27 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          if (Test-Path "$env:TEMP\server_pid.txt") {
-            Stop-Process -Id (Get-Content "$env:TEMP\server_pid.txt") -ErrorAction SilentlyContinue
+          $pidFile = Join-Path $env:RUNNER_TEMP "server_pid.txt"
+          if (Test-Path $pidFile) {
+            Stop-Process -Id (Get-Content $pidFile) -ErrorAction SilentlyContinue
           }
           Get-Process python -ErrorAction SilentlyContinue |
             Where-Object { $_.CommandLine -match "http.server" } |
             Stop-Process -Force
+
+      - name: Ensure ci requirements artifact exists
+        if: always()
+        shell: pwsh
+        run: |
+          $ciDir = Join-Path $PWD "ci"
+          if (-not (Test-Path $ciDir)) { New-Item -ItemType Directory -Path $ciDir -Force | Out-Null }
+          $ciReq = Join-Path $ciDir "requirements.ci.txt"
+          if (-not (Test-Path $ciReq)) {
+            Write-Host "Generating placeholder $ciReq"
+            "numpy==1.26.0" | Out-File -FilePath $ciReq -Encoding UTF8
+          } else {
+            Write-Host "$ciReq already exists; leaving unchanged"
+          }
 
       - name: Upload test outputs
         if: always()
@@ -150,5 +170,6 @@ jobs:
           path: |
             outputs/
             *.log
-            ${{ env.TEMP }}/requirements.cleaned.txt
+            ci/requirements.ci.txt
+            ${{ runner.temp }}/requirements.cleaned.txt
           retention-days: 7
