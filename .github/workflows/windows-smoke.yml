@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -19,6 +22,17 @@ jobs:
       - name: Setup PowerShell execution policy
         shell: pwsh
         run: Set-ExecutionPolicy Bypass -Scope Process -Force
+
+      - name: Check for existing FFmpeg
+        id: ffcheck
+        shell: pwsh
+        run: |
+          if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+            Write-Host "ffmpeg found"
+            "ffmpeg_exists=true" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii
+          } else {
+            "ffmpeg_exists=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii
+          }
 
       - name: Install Chocolatey (robust method)
         shell: pwsh
@@ -42,7 +56,9 @@ jobs:
             Write-Error "Chocolatey installation failed: $($_.Exception.Message)"
             exit 1
           }
+
       - name: Install FFmpeg via Chocolatey
+        if: env.ffmpeg_exists == 'false'
         shell: pwsh
         run: |
           $maxRetries = 4
@@ -66,6 +82,32 @@ jobs:
               Start-Sleep -Seconds (5 * $i)
             }
           }
+
+      - name: Download and extract FFmpeg (no Chocolatey)
+        if: env.ffmpeg_exists == 'false'
+        shell: pwsh
+        run: |
+          $url     = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
+          $dst     = Join-Path $env:RUNNER_TEMP 'ffmpeg.zip'
+          $extract = Join-Path $env:RUNNER_TEMP 'ffmpeg'
+          Invoke-WebRequest -Uri $url -OutFile $dst
+          if (-Not (Test-Path $extract)) { New-Item -ItemType Directory -Path $extract | Out-Null }
+          Expand-Archive -LiteralPath $dst -DestinationPath $extract -Force
+          $ff  = Get-ChildItem $extract -Directory | Select-Object -First 1
+          $bin = Join-Path $ff.FullName 'bin'
+          Write-Host "Adding $bin to PATH for this job"
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+
+      - name: Verify FFmpeg available
+        if: env.ffmpeg_exists == 'false'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+            Write-Error "ffmpeg not found in PATH"
+            exit 1
+          }
+          ffmpeg -version
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -84,6 +126,7 @@ jobs:
             exit 1
           }
           ffmpeg -version
+
       - name: Install Python dependencies
         shell: pwsh
         run: |
@@ -99,20 +142,20 @@ jobs:
               Write-Host "Installing Python packages from requirements"
               python -m pip install --upgrade pip
               python -m pip install -r $tempReq
-            }
-            else {
+            } else {
               Write-Host "No valid requirements found; skipping pip install"
             }
-          }
-          else {
+          } else {
             Write-Host "No requirements.txt; skipping pip install"
           }
+
       - name: Start background HTTP server
         shell: pwsh
         run: |
           $proc = Start-Process -NoNewWindow -FilePath python -ArgumentList "-m","http.server","8000" -PassThru
           $proc.Id | Out-File (Join-Path $env:RUNNER_TEMP "server_pid.txt") -Encoding ascii
           Start-Sleep -Seconds 3
+
       - name: Run smoke tests
         shell: pwsh
         run: |
@@ -130,6 +173,7 @@ jobs:
           } catch {
             Write-Warning "FFmpeg test failed"
           }
+
       - name: Cleanup background processes
         if: always()
         shell: pwsh
@@ -141,6 +185,7 @@ jobs:
           Get-Process python -ErrorAction SilentlyContinue |
             Where-Object { $_.CommandLine -match "http.server" } |
             Stop-Process -Force
+
       - name: Ensure ci requirements artifact exists
         if: always()
         shell: pwsh
@@ -154,6 +199,7 @@ jobs:
           } else {
             Write-Host "$ciReq already exists; leaving unchanged"
           }
+
       - name: Upload test outputs
         if: always()
         uses: actions/upload-artifact@v4
