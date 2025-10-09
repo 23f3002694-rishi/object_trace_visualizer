@@ -23,3 +23,4 @@ if (Test-Path $Requirements) {
 
 # run tests (runs tests/ by default; also accepts -TestTarget to add other paths)
 python -m pytest tests $TestTarget -q
+
