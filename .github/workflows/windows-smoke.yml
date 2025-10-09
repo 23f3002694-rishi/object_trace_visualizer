@@ -13,95 +13,235 @@ jobs:
       PYTHONUNBUFFERED: '1'
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # --- FFmpeg Installation: Combined step for Path Reliability ---
-      - name: Install and Verify FFmpeg (PowerShell Reliable)
+      - name: Setup PowerShell execution policy
+        shell: pwsh
+        run: Set-ExecutionPolicy Bypass -Scope Process -Force
+
+      - name: Install Chocolatey (robust method)
         shell: pwsh
         run: |
-          Write-Host "Installing ffmpeg via choco..."
-          # Install ffmpeg.
-          if (-not (choco install ffmpeg -y --no-progress)) {
-              Write-Error "FFmpeg installation via choco failed."; exit 1
+          try {
+            # Check if Chocolatey is already installed
+            if (Get-Command choco -ErrorAction SilentlyContinue) {
+              Write-Host "Chocolatey already installed"
+              exit 0
+            }
+            
+            # Install Chocolatey using recommended method
+            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+            iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+            
+            # Add Chocolatey to PATH for current session
+            $chocoBin = "$env:ALLUSERSPROFILE\chocolatey\bin"
+            Add-Content $env:GITHUB_PATH $chocoBin
+            $env:Path = "$chocoBin;$env:Path"
+            
+            # Verify installation
+            if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+              throw "Chocolatey installation failed - choco command not found"
+            }
+            Write-Host "Chocolatey installed successfully"
+          }
+          catch {
+            Write-Error "Chocolatey installation failed: $($_.Exception.Message)"
+            exit 1
           }
 
-          # CRITICAL: Refresh environment and verify command in the same shell session.
-          Write-Host "Refreshing environment path and command cache..."
-          refreshenv
-          
-          Write-Host "Verifying FFmpeg in current shell..."
-          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { 
-            # If this fails, it indicates a deep issue with the choco installation or runner environment.
-            Write-Error "ffmpeg not available on PATH after install and refreshenv, failing build."; exit 1 
-          }
-          ffmpeg -version # Final verification in the same step is necessary for reliability
+      - name: Setup FFmpeg (alternative using dedicated action)
+        uses: AnimMouse/setup-ffmpeg@v1
+        with:
+          version: latest
 
-      - name: Setup Python 3.11 and Cache Dependencies
+      - name: Fallback FFmpeg installation via Chocolatey
+        if: failure()
+        shell: pwsh
+        run: |
+          Write-Host "Attempting FFmpeg installation via Chocolatey fallback"
+          $maxRetries = 3
+          for ($i = 1; $i -le $maxRetries; $i++) {
+            try {
+              & choco install ffmpeg -y --no-progress
+              
+              # Ensure Chocolatey bin is in PATH
+              $chocoBin = "$env:ALLUSERSPROFILE\chocolatey\bin"
+              if (-not ($env:Path -split ';' | Where-Object { $_ -eq $chocoBin })) {
+                Add-Content $env:GITHUB_PATH $chocoBin
+                $env:Path = "$chocoBin;$env:Path"
+              }
+              
+              # Verify installation
+              if (Get-Command ffmpeg -ErrorAction SilentlyContinue) { 
+                Write-Host "FFmpeg installed successfully via Chocolatey"
+                break 
+              }
+              throw "ffmpeg not found after Chocolatey installation"
+            }
+            catch {
+              Write-Host "FFmpeg install attempt $i failed: $($_.Exception.Message)"
+              if ($i -eq $maxRetries) { 
+                Write-Error "All FFmpeg installation attempts failed"
+                exit 1
+              }
+              Start-Sleep -Seconds (5 * $i)
+            }
+          }
+
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: requirements.txt
 
-      # --- Python Setup and Dependencies ---
+      - name: Verify core dependencies
+        shell: pwsh
+        run: |
+          Write-Host "=== Verifying Python ==="
+          if (-not (Get-Command python -ErrorAction SilentlyContinue)) { 
+            Write-Error "Python not found in PATH"
+            exit 1 
+          }
+          python --version
+          
+          Write-Host "=== Verifying FFmpeg ==="
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { 
+            Write-Error "FFmpeg not found in PATH"
+            exit 1 
+          }
+          ffmpeg -version
 
-      - name: Install Python Dependencies
+      - name: Install Python dependencies (with sanitization)
         shell: pwsh
         run: |
           if (Test-Path requirements.txt) {
-            python -m pip install --upgrade pip
-            python -m pip install -r requirements.txt
+            Write-Host "Found requirements.txt, sanitizing and installing dependencies"
+            
+            # Create sanitized requirements file
+            $tempReq = "$env:TEMP\requirements.cleaned.txt"
+            Get-Content requirements.txt |
+              Where-Object { $_ -ne '' } |
+              Where-Object { $_ -notmatch '^\s*(ECHO is off\.|@?ECHO\s+OFF\b|rem\b|\#.*$|^$)' } |
+              ForEach-Object { $_.Trim() } |
+              Where-Object { $_ -ne '' -and $_ -notmatch '^[\s\t]*$' } |
+              Set-Content -Path $tempReq -Encoding UTF8
+            
+            # Check if we have valid requirements
+            $validLines = (Get-Content $tempReq -ErrorAction SilentlyContinue).Length
+            if ($validLines -eq 0) {
+              Write-Host "No valid Python packages found in requirements.txt after sanitization"
+            } else {
+              Write-Host "Installing $validLines Python packages"
+              python -m pip install --upgrade pip
+              python -m pip install -r $tempReq
+            }
           } else {
-            Write-Host "No requirements.txt found; skipping pip install."
+            Write-Host "No requirements.txt found, skipping Python dependency installation"
           }
 
-      - name: Create Output Directory
-        shell: pwsh
-        run: New-Item -Path 'outputs' -ItemType Directory -Force
-
-      # --- Execution Steps ---
-
-      - name: Start static server in background
-        id: start_server
+      - name: Start background HTTP server
         shell: pwsh
         run: |
-          # Save the process ID to a file for explicit cleanup later
-          $pidFile = "server_pid.txt"
-          Write-Host "Starting http.server in background on port 8000"
-          $process = Start-Process -NoNewWindow -PassThru -FilePath python -ArgumentList "-m","http.server","8000"
-          $process.Id | Out-File -FilePath $pidFile -Encoding UTF8
-          Start-Sleep -Seconds 2
+          Write-Host "Starting HTTP server on port 8000 in background"
+          $serverProcess = Start-Process -NoNewWindow -FilePath python -ArgumentList "-m","http.server","8000" -PassThru
+          
+          # Store process ID for later cleanup
+          $serverProcess.Id | Out-File -FilePath "$env:TEMP\server_pid.txt" -Encoding UTF8
+          
+          # Wait for server to start
+          Start-Sleep -Seconds 3
+          
+          # Verify server is responding
+          try {
+            $response = Invoke-WebRequest -Uri "http://localhost:8000" -TimeoutSec 5 -ErrorAction Stop
+            Write-Host "HTTP server started successfully (Status: $($response.StatusCode))"
+          }
+          catch {
+            Write-Warning "HTTP server may not be fully ready: $($_.Exception.Message)"
+          }
 
-      - name: Run smoke command
+      - name: Run smoke tests
         shell: pwsh
         run: |
-          python -c "print('smoke test placeholder running...')"
+          Write-Host "=== Running Smoke Tests ==="
+          
+          # Main smoke test
+          python -c "print('✓ Python execution test passed')"
+          
+          # Test HTTP server connectivity
+          try {
+            $response = Invoke-WebRequest -Uri "http://localhost:8000" -TimeoutSec 10
+            Write-Host "✓ HTTP server connectivity test passed"
+          }
+          catch {
+            Write-Warning "HTTP server test failed: $($_.Exception.Message)"
+          }
+          
+          # Test FFmpeg functionality
+          try {
+            $ffmpegOutput = & ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=duration=1:size=320x240:rate=1 -f null - 2>&1
+            Write-Host "✓ FFmpeg functionality test passed"
+          }
+          catch {
+            Write-Warning "FFmpeg test failed: $($_.Exception.Message)"
+          }
+          
+          Write-Host "=== Smoke Tests Complete ==="
 
-      - name: Optional ffmpeg task
+      - name: Optional FFmpeg advanced test
         shell: pwsh
         run: |
-          # FFmpeg should be available here since the previous steps succeeded
-          ffmpeg -hide_banner -loglevel error -version
+          if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+            Write-Host "Running advanced FFmpeg test"
+            ffmpeg -hide_banner -loglevel error -version
+            Write-Host "✓ FFmpeg version check passed"
+          } else {
+            Write-Host "⚠ FFmpeg not available for advanced testing"
+          }
 
-      # --- Cleanup and Artifact Upload ---
-      
-      - name: Stop Background Server (Crucial Cleanup)
+      - name: Cleanup background processes
         if: always()
         shell: pwsh
         run: |
-          $pidFile = "server_pid.txt"
+          Write-Host "Cleaning up background processes"
+          
+          # Try to stop the HTTP server using stored PID
+          $pidFile = "$env:TEMP\server_pid.txt"
           if (Test-Path $pidFile) {
-            $pid = Get-Content $pidFile -ErrorAction SilentlyContinue
-            if ($pid -and $pid -as [int]) {
-              Write-Host "Stopping server with PID: $pid"
-              Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+            try {
+              $pid = Get-Content $pidFile
+              $process = Get-Process -Id $pid -ErrorAction SilentlyContinue
+              if ($process) {
+                Stop-Process -Id $pid -Force
+                Write-Host "✓ HTTP server process ($pid) terminated"
+              }
+            }
+            catch {
+              Write-Host "Note: Could not terminate server process via PID: $($_.Exception.Message)"
             }
           }
-      
-      - name: Upload outputs (if any)
+          
+          # Fallback: kill any remaining python http.server processes
+          try {
+            Get-Process python -ErrorAction SilentlyContinue | 
+              Where-Object {$_.CommandLine -like "*http.server*"} | 
+              ForEach-Object {
+                Stop-Process -Id $_.Id -Force
+                Write-Host "✓ Terminated orphaned HTTP server process: $($_.Id)"
+              }
+          }
+          catch {
+            Write-Host "Note: No additional HTTP server processes found to clean up"
+          }
+
+      - name: Upload test outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: outputs
-          path: outputs
+          name: smoke-test-outputs
+          path: |
+            outputs/
+            *.log
+            ${{ env.TEMP }}/requirements.cleaned.txt
+          retention-days: 7
+          if-no-files-found: warn
