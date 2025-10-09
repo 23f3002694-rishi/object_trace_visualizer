@@ -16,19 +16,26 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # --- Best Practice: Use a dedicated action for FFmpeg ---
-      - name: Setup FFmpeg (Reliable Method)
-        # Replaces complex Chocolatey logic with a robust, platform-aware action
-        uses: wassimk/setup-ffmpeg@v1
-        with:
-          # You can specify a version if needed, otherwise it uses the latest stable version.
-          # version: '6.1'
-
-      - name: Verify FFmpeg Installation
+      # --- FFmpeg Installation: Combined step for Path Reliability ---
+      - name: Install and Verify FFmpeg (PowerShell Reliable)
         shell: pwsh
         run: |
-          Write-Host "FFmpeg successfully installed and available via setup-ffmpeg action."
-          ffmpeg -version # This is now guaranteed to work if the action succeeded.
+          Write-Host "Installing ffmpeg via choco..."
+          # Install ffmpeg.
+          if (-not (choco install ffmpeg -y --no-progress)) {
+              Write-Error "FFmpeg installation via choco failed."; exit 1
+          }
+
+          # CRITICAL: Refresh environment and verify command in the same shell session.
+          Write-Host "Refreshing environment path and command cache..."
+          refreshenv
+          
+          Write-Host "Verifying FFmpeg in current shell..."
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { 
+            # If this fails, it indicates a deep issue with the choco installation or runner environment.
+            Write-Error "ffmpeg not available on PATH after install and refreshenv, failing build."; exit 1 
+          }
+          ffmpeg -version # Final verification in the same step is necessary for reliability
 
       - name: Setup Python 3.11 and Cache Dependencies
         uses: actions/setup-python@v5
@@ -74,7 +81,7 @@ jobs:
       - name: Optional ffmpeg task
         shell: pwsh
         run: |
-          # Now we can reliably use FFmpeg without an 'if' guard.
+          # FFmpeg should be available here since the previous steps succeeded
           ffmpeg -hide_banner -loglevel error -version
 
       # --- Cleanup and Artifact Upload ---
