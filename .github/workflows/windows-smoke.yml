@@ -1,175 +1,93 @@
-name: Windows smoke tests
+name: windows-smoke
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  smoke-windows:
+  windows-smoke:
     runs-on: windows-latest
-    env:
-      PYTHONUNBUFFERED: '1'
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup PowerShell execution policy
-        shell: pwsh
-        run: Set-ExecutionPolicy Bypass -Scope Process -Force
-
-      - name: Install Chocolatey (robust method)
-        shell: pwsh
+      - name: Environment snapshot
+        shell: powershell
         run: |
-          try {
-            if (Get-Command choco -ErrorAction SilentlyContinue) {
-              Write-Host "Chocolatey already installed"
-              exit 0
-            }
-            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-            iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-            $chocoBin = "$env:ALLUSERSPROFILE\chocolatey\bin"
-            Add-Content -Path $env:GITHUB_PATH -Value $chocoBin
-            $env:Path = "$chocoBin;$env:Path"
-            if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
-              throw "Chocolatey installation failed"
-            }
-            Write-Host "Chocolatey installed successfully"
-          }
-          catch {
-            Write-Error "Chocolatey installation failed: $($_.Exception.Message)"
-            exit 1
-          }
-
-      - name: Install FFmpeg via Chocolatey
-        shell: pwsh
-        run: |
-          $maxRetries = 4
-          $chocoBin = "$env:ALLUSERSPROFILE\chocolatey\bin"
-          for ($i = 1; $i -le $maxRetries; $i++) {
-            try {
-              choco install ffmpeg -y --no-progress
-              if (-not ($env:Path -split ';' | Where-Object { $_ -eq $chocoBin })) {
-                Add-Content -Path $env:GITHUB_PATH -Value $chocoBin
-                $env:Path = "$chocoBin;$env:Path"
-              }
-              if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
-                Write-Host "FFmpeg installed successfully"
-                break
-              }
-              throw "ffmpeg not found after install"
-            }
-            catch {
-              Write-Host "Attempt $i failed: $($_.Exception.Message)"
-              if ($i -eq $maxRetries) { exit 1 }
-              Start-Sleep -Seconds (5 * $i)
-            }
-          }
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Verify core dependencies
-        shell: pwsh
-        run: |
-          if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-            Write-Error "Python not found"
-            exit 1
-          }
+          Write-Host "### environment snapshot ###"
           python --version
-          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-            Write-Error "FFmpeg not found"
+          python -c "import platform; print(platform.platform())"
+          python -m pip --version
+          python -m pip list --format=columns | Select-Object -First 50
+
+      - name: Network diagnostics (pre-install)
+        shell: powershell
+        run: |
+          Write-Host "Checking reachability to chocolatey.org and common mirrors"
+          try { curl -I https://chocolatey.org -UseBasicParsing } catch { Write-Host "curl failed" }
+          try { Test-NetConnection chocolatey.org -Port 443 } catch { Write-Host "Test-NetConnection failed" }
+          try { nslookup chocolatey.org } catch { Write-Host "nslookup failed" }
+
+      - name: Install FFmpeg with Chocolatey (retries, extended timeout, verbose)
+        id: choco-ffmpeg
+        shell: powershell
+        run: |
+          $tries = 3
+          $success = $false
+          $log = Join-Path $env:GITHUB_WORKSPACE 'choco-install-ffmpeg.log'
+          if (Test-Path $log) { Remove-Item $log -Force }
+          for ($i = 1; $i -le $tries; $i++) {
+            Write-Host "choco attempt $i/$tries - starting at $(Get-Date -Format o)"
+            choco install ffmpeg -y --execution-timeout=2700 -v 4 *>&1 | Tee-Object -FilePath $log -Append
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "choco install succeeded on attempt $i"
+              $success = $true
+              break
+            }
+            Write-Host "choco install failed on attempt $i with exit code $LASTEXITCODE"
+            Start-Sleep -Seconds (30 * $i)
+          }
+          if (-not $success) {
+            Write-Host "FFmpeg install failed after $tries attempts. Attaching log and exiting with failure."
+            Write-Host "Log path: $log"
             exit 1
           }
+
+      - name: Upload choco log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: choco-ffmpeg-log
+          path: choco-install-ffmpeg.log
+
+      - name: Verify ffmpeg in PATH
+        shell: powershell
+        run: |
+          $ff = & ffmpeg -version 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host "ffmpeg not found in PATH"; exit 1 }
+          Write-Host "ffmpeg found:"
           ffmpeg -version
 
-      - name: Install Python dependencies
-        shell: pwsh
+      - name: Setup Python venv and install CI deps
+        shell: powershell
         run: |
-          if (Test-Path requirements.txt) {
-            Write-Host "Found requirements.txt, sanitizing..."
-            $tempReq = Join-Path $env:RUNNER_TEMP "requirements.cleaned.txt"
-            $lines = Get-Content requirements.txt |
-              Where-Object { $_ -and $_ -notmatch '^\s*(ECHO is off\.|@?ECHO\s+OFF\b|rem\b|\#)' } |
-              ForEach-Object { $_.Trim() } |
-              Where-Object { $_ -ne '' }
-            if ($lines.Count -gt 0) {
-              $lines | Set-Content -Path $tempReq -Encoding UTF8
-              Write-Host "Installing Python packages from requirements"
-              python -m pip install --upgrade pip
-              python -m pip install -r $tempReq
-            }
-            else {
-              Write-Host "No valid requirements found; skipping pip install"
-            }
-          }
-          else {
-            Write-Host "No requirements.txt; skipping pip install"
-          }
+          python -m venv .venv
+          .\.venv\Scripts\Activate.ps1
+          python -m pip install --upgrade pip setuptools wheel
+          if (Test-Path ci/requirements.ci.txt) { python -m pip install -r ci/requirements.ci.txt } else { Write-Host "ci/requirements.ci.txt not found, skipping" }
 
-      - name: Start background HTTP server
-        shell: pwsh
+      - name: Run tests
+        shell: powershell
         run: |
-          $proc = Start-Process -NoNewWindow -FilePath python -ArgumentList "-m","http.server","8000" -PassThru
-          $proc.Id | Out-File (Join-Path $env:RUNNER_TEMP "server_pid.txt") -Encoding ascii
-          Start-Sleep -Seconds 3
+          .\.venv\Scripts\Activate.ps1
+          python -m pytest tests -q
 
-      - name: Run smoke tests
-        shell: pwsh
-        run: |
-          Write-Host "Running smoke tests"
-          python -c "print('Python execution test passed')"
-          try {
-            Invoke-WebRequest http://localhost:8000 -UseBasicParsing -TimeoutSec 5 | Out-Null
-            Write-Host "HTTP server connectivity test passed"
-          } catch {
-            Write-Warning "HTTP server test failed"
-          }
-          try {
-            ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=duration=1:size=320x240:rate=1 -f null - | Out-Null
-            Write-Host "FFmpeg functionality test passed"
-          } catch {
-            Write-Warning "FFmpeg test failed"
-          }
-
-      - name: Cleanup background processes
-        if: always()
-        shell: pwsh
-        run: |
-          $pidFile = Join-Path $env:RUNNER_TEMP "server_pid.txt"
-          if (Test-Path $pidFile) {
-            Stop-Process -Id (Get-Content $pidFile) -ErrorAction SilentlyContinue
-          }
-          Get-Process python -ErrorAction SilentlyContinue |
-            Where-Object { $_.CommandLine -match "http.server" } |
-            Stop-Process -Force
-
-      - name: Ensure ci requirements artifact exists
-        if: always()
-        shell: pwsh
-        run: |
-          $ciDir = Join-Path $PWD "ci"
-          if (-not (Test-Path $ciDir)) { New-Item -ItemType Directory -Path $ciDir -Force | Out-Null }
-          $ciReq = Join-Path $ciDir "requirements.ci.txt"
-          if (-not (Test-Path $ciReq)) {
-            Write-Host "Generating placeholder $ciReq"
-            "numpy==1.26.0" | Out-File -FilePath $ciReq -Encoding UTF8
-          } else {
-            Write-Host "$ciReq already exists; leaving unchanged"
-          }
-
-      - name: Upload test outputs
+      - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-test-outputs
+          name: pytest-results
           path: |
-            outputs/
-            *.log
-            ci/requirements.ci.txt
-            ${{ runner.temp }}/requirements.cleaned.txt
-          retention-days: 7
+            pytest.xml
+            junit*.xml
