@@ -1,6 +1,6 @@
 # src/output_resolver.py
 import requests
-from typing import Optional
+
 
 def resolve_latest_path(base_outputs_url: str, timeout: float = 2.0) -> str:
     """
