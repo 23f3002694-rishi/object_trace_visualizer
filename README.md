@@ -10,3 +10,6 @@ Run the local CI helper (Windows PowerShell):
 
 If tests fail locally, run: python -m pytest tests -q
 
+
+See CONTRIBUTING.md for how to run local CI and troubleshooting.
+
