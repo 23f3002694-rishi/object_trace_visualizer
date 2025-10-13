@@ -8,6 +8,8 @@ on:
 jobs:
   build-and-test-windows:
     runs-on: windows-latest
+    timeout-minutes: 40
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,10 +31,18 @@ jobs:
         shell: powershell
         run: |
           .\.venv\Scripts\Activate.ps1
-          # Change directory to the workspace
-          Set-Location $env:GITHUB_WORKSPACE\object_trace_visualizer
+          # Move into subfolder where the script lives
+          Set-Location "$env:GITHUB_WORKSPACE\object_trace_visualizer"
+          # Clean previous artifacts
           Remove-Item -Recurse -Force .\build, .\dist, .\*.spec -ErrorAction SilentlyContinue
+          # Build
           pyinstaller --clean --onefile --console --add-data "viewer;viewer" launch_viewer_webview.py
+          # Verify
+          if (-not (Test-Path "dist\launch_viewer_webview.exe")) {
+            Write-Error "PyInstaller build failed: EXE not found"
+            exit 1
+          }
+          Write-Host "✅ Build succeeded, EXE size:" (Get-Item "dist\launch_viewer_webview.exe").Length "bytes"
 
       - name: Run integration test against EXE
         shell: powershell
@@ -40,11 +50,24 @@ jobs:
           PYTHONUTF8: 1
         run: |
           .\.venv\Scripts\Activate.ps1
+          # Run test and capture log
           python .\integration_test.py --exe ".\dist\launch_viewer_webview.exe" --port 60031 --no-new-console *> integration_test_with_exe_log.txt
+          # Show tail for debugging
+          Write-Host "=== Integration Test Log (tail 200) ==="
           Get-Content .\integration_test_with_exe_log.txt -Tail 200
 
       - name: Upload integration test artifacts
         uses: actions/upload-artifact@v4
         with:
           name: integration_test_artifacts
-          path: integration_test_artifacts
+          path: integration_test_artifacts/
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build_artifacts
+          path: |
+            object_trace_visualizer/dist/launch_viewer_webview.exe
+            object_trace_visualizer/build/
+            object_trace_visualizer/*.spec
