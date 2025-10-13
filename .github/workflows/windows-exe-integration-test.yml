@@ -36,13 +36,13 @@ jobs:
           Write-Host "Python version: $(python --version)"
           Write-Host "PyInstaller version: $(pyinstaller --version)"
 
-          # Ensure we are at repo root
+          # Ensure we are at repo root (adjust if your sources are elsewhere)
           Set-Location $env:GITHUB_WORKSPACE
           Write-Host "PWD = $(Get-Location)"
-          Write-Host "Top-level files:"
+          Write-Host "Top-level files and directories:"
           Get-ChildItem -Force | Select-Object Name,Length | Format-Table -AutoSize
 
-          # Optional: install dependencies so PyInstaller can import project modules
+          # Install project requirements if present (helps PyInstaller import-time)
           if (Test-Path requirements.txt) {
             Write-Host "Installing requirements.txt"
             pip install -r requirements.txt
@@ -50,39 +50,33 @@ jobs:
             Write-Host "No requirements.txt found, skipping dependency install"
           }
 
-          # Verify script and viewer directory exist under src/
-          if (-not (Test-Path "src\launch_viewer_webview.py")) {
-            Write-Error "Script src\\launch_viewer_webview.py not found."
+          # Verify correct entrypoint and static assets exist at repo root
+          if (-not (Test-Path ".\launch_viewer_webview.py")) {
+            Write-Error "Required entrypoint launch_viewer_webview.py not found in repo root. Update workflow to point to your actual launcher script."
             exit 1
           }
-          if (-not (Test-Path "src\viewer")) {
-            Write-Error "Directory src\\viewer not found."
+          if (-not (Test-Path ".\viewer")) {
+            Write-Host "Warning: viewer/ directory not found in repo root. If static assets are required, ensure viewer/ is committed."
+          }
+
+          # Clean prior build output
+          Remove-Item -Recurse -Force .\build, .\dist, .\*.spec -ErrorAction SilentlyContinue
+
+          # Run PyInstaller; Windows add-data uses semicolon separator
+          pyinstaller --clean --log-level=DEBUG --onefile --console --add-data "viewer;viewer" --distpath dist --workpath build --specpath build launch_viewer_webview.py
+
+          # Dump PyInstaller warn file for diagnostics if present
+          Get-ChildItem -Path build -Filter "warn-*.txt" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "=== PyInstaller warn file: $($_.FullName) ==="
+            Get-Content $_.FullName -Tail 400
+          }
+
+          # Fail loudly if EXE not produced
+          if (-not (Test-Path "dist\launch_viewer_webview.exe")) {
+            Write-Error "PyInstaller build failed: dist\launch_viewer_webview.exe not found"
             exit 1
           }
-
-          # Clean previous build artifacts
-          Remove-Item -Recurse -Force src\build, src\dist, src\*.spec -ErrorAction SilentlyContinue
-
-          # Run PyInstaller (use escaped backslashes for Windows add-data)
-          pyinstaller --clean --log-level=DEBUG --onefile --console `
-            --add-data "src\\viewer;viewer" `
-            --distpath src\dist --workpath src\build --specpath src\build `
-            src\launch_viewer_webview.py
-
-          # Print PyInstaller warnings if any
-          $warn = Get-ChildItem -Path src\build -Filter "warn-*.txt" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($warn) {
-            Write-Host "=== PyInstaller warn file: $($warn.FullName) ==="
-            Get-Content $warn.FullName -Tail 200
-          }
-
-          # Verify EXE was produced
-          if (-not (Test-Path "src\dist\launch_viewer_webview.exe")) {
-            Write-Error "PyInstaller build failed: src\\dist\\launch_viewer_webview.exe not found"
-            exit 1
-          }
-          $exe = Get-Item "src\dist\launch_viewer_webview.exe"
-          Write-Host "✅ Build succeeded, EXE size: $($exe.Length) bytes"
+          Write-Host "✅ Build succeeded, EXE size:" (Get-Item "dist\launch_viewer_webview.exe").Length "bytes"
 
       - name: Run integration test against EXE
         shell: powershell
@@ -90,12 +84,9 @@ jobs:
           PYTHONUTF8: 1
         run: |
           .\.venv\Scripts\Activate.ps1
-          # Ensure artifacts dir exists
           New-Item -ItemType Directory -Path integration_test_artifacts -Force | Out-Null
 
-          python .\integration_test.py `
-            --exe "src\dist\launch_viewer_webview.exe" `
-            --port 60031 --no-new-console *> integration_test_with_exe_log.txt
+          python .\integration_test.py --exe ".\dist\launch_viewer_webview.exe" --port 60031 --no-new-console *> integration_test_with_exe_log.txt
 
           Write-Host "=== Integration Test Log (tail 200) ==="
           Get-Content .\integration_test_with_exe_log.txt -Tail 200
@@ -113,6 +104,6 @@ jobs:
         with:
           name: build_artifacts
           path: |
-            src/dist/launch_viewer_webview.exe
-            src/build/
-            src/*.spec
+            dist/launch_viewer_webview.exe
+            build/
+            *.spec
