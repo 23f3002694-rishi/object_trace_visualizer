@@ -32,49 +32,43 @@ jobs:
         run: |
           .\.venv\Scripts\Activate.ps1
 
-          Write-Host "GITHUB_WORKSPACE = $env:GITHUB_WORKSPACE"
-          Write-Host "Python version: $(python --version)"
-          Write-Host "PyInstaller version: $(pyinstaller --version)"
+          Write-Host "PWD = $((Get-Location).Path)"
+          Write-Host "Files at root:"
+          Get-ChildItem -Name
 
-          # Stay at repo root
-          Set-Location $env:GITHUB_WORKSPACE
-          Write-Host "PWD = $(Get-Location)"
-          Write-Host "Top-level files:"
-          Get-ChildItem -Force | Select-Object Name,Length | Format-Table -AutoSize
-
-          # Verify src layout
-          if (-not (Test-Path "src\launch_viewer_webview.py")) {
-            Write-Error "File src\launch_viewer_webview.py not found."
+          # Ensure files exist at root
+          if (-not (Test-Path "launch_viewer_webview.py")) {
+            Write-Error "launch_viewer_webview.py not found at repo root"
             exit 1
           }
-          if (-not (Test-Path "src\viewer")) {
-            Write-Error "Directory src\viewer not found."
+          if (-not (Test-Path "viewer")) {
+            Write-Error "viewer/ directory not found at repo root"
             exit 1
           }
 
           # Clean old builds
-          Remove-Item -Recurse -Force src\build, src\dist, src\*.spec -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force build, dist, *.spec -ErrorAction SilentlyContinue
 
-          # Build EXE bundling src/viewer
+          # Build EXE
           pyinstaller --clean --log-level=DEBUG --onefile --console `
-            --add-data "src/viewer;viewer" `
-            --distpath src\dist --workpath src\build --specpath src\build `
-            src/launch_viewer_webview.py
+            --add-data "viewer;viewer" `
+            --distpath dist --workpath build --specpath build `
+            launch_viewer_webview.py
 
-          # Show any PyInstaller warnings
-          $warn = Get-ChildItem src\build -Filter "warn-*.txt" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          # Show warnings
+          $warn = Get-ChildItem build -Filter "warn-*.txt" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($warn) {
-            Write-Host "=== PyInstaller warn file: $($warn.FullName) ==="
+            Write-Host "=== PyInstaller warn file ==="
             Get-Content $warn.FullName -Tail 200
           }
 
-          # Verify EXE output
-          if (-not (Test-Path "src\dist\launch_viewer_webview.exe")) {
-            Write-Error "Build failed: src\dist\launch_viewer_webview.exe not found"
+          # Verify EXE
+          if (-not (Test-Path "dist\launch_viewer_webview.exe")) {
+            Write-Error "Build failed: dist\launch_viewer_webview.exe not found"
             exit 1
           }
-          $exe = Get-Item "src\dist\launch_viewer_webview.exe"
-          Write-Host "✅ Build succeeded: EXE size $($exe.Length) bytes"
+          $exe = Get-Item "dist\launch_viewer_webview.exe"
+          Write-Host "✅ Build succeeded: $($exe.Length) bytes"
 
       - name: Run integration test against EXE
         shell: powershell
@@ -85,7 +79,7 @@ jobs:
           New-Item -ItemType Directory -Path integration_test_artifacts -Force | Out-Null
 
           python .\integration_test.py `
-            --exe "src\dist\launch_viewer_webview.exe" `
+            --exe "dist\launch_viewer_webview.exe" `
             --port 60031 --no-new-console *> integration_test_with_exe_log.txt
 
           Write-Host "=== Integration Test Log (tail 200) ==="
@@ -104,6 +98,6 @@ jobs:
         with:
           name: build_artifacts
           path: |
-            src/dist/launch_viewer_webview.exe
-            src/build/
-            src/*.spec
+            dist/launch_viewer_webview.exe
+            build/
+            *.spec
