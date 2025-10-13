@@ -31,7 +31,6 @@ jobs:
           .\.venv\Scripts\Activate.ps1
           Set-Location $GITHUB_WORKSPACE
           Remove-Item -Recurse -Force .\build, .\dist, .\*.spec -ErrorAction SilentlyContinue
-          # Use the real script path that exists in the repo root
           pyinstaller --clean --onefile --console --add-data "viewer;viewer" launch_viewer_webview.py
 
       - name: Run integration test against EXE
