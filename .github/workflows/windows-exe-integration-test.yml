@@ -31,18 +31,22 @@ jobs:
         shell: powershell
         run: |
           .\.venv\Scripts\Activate.ps1
-          # Move into subfolder where the script lives
-          Set-Location "$env:GITHUB_WORKSPACE\object_trace_visualizer"
+          Write-Host "GITHUB_WORKSPACE = $env:GITHUB_WORKSPACE"
+          # Build from repository root where launch_viewer_webview.py and viewer/ live
+          Set-Location $env:GITHUB_WORKSPACE
+          Write-Host "PWD = $(Get-Location)"
+          Write-Host "Listing files in working dir:"
+          Get-ChildItem -Force | Select-Object Name,Length | Format-Table -AutoSize
           # Clean previous artifacts
           Remove-Item -Recurse -Force .\build, .\dist, .\*.spec -ErrorAction SilentlyContinue
           # Build
           pyinstaller --clean --onefile --console --add-data "viewer;viewer" launch_viewer_webview.py
-          # Verify
+          # Verify artifact
           if (-not (Test-Path "dist\launch_viewer_webview.exe")) {
-            Write-Error "PyInstaller build failed: EXE not found"
+            Write-Error "PyInstaller build failed: EXE not found at dist\launch_viewer_webview.exe"
             exit 1
           }
-          Write-Host "✅ Build succeeded, EXE size:" (Get-Item "dist\launch_viewer_webview.exe").Length "bytes"
+          Write-Host "Build succeeded, EXE size:" (Get-Item "dist\launch_viewer_webview.exe").Length "bytes"
 
       - name: Run integration test against EXE
         shell: powershell
@@ -50,13 +54,13 @@ jobs:
           PYTHONUTF8: 1
         run: |
           .\.venv\Scripts\Activate.ps1
-          # Run test and capture log
+          # Run integration test and capture log
           python .\integration_test.py --exe ".\dist\launch_viewer_webview.exe" --port 60031 --no-new-console *> integration_test_with_exe_log.txt
-          # Show tail for debugging
           Write-Host "=== Integration Test Log (tail 200) ==="
           Get-Content .\integration_test_with_exe_log.txt -Tail 200
 
       - name: Upload integration test artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: integration_test_artifacts
@@ -68,6 +72,6 @@ jobs:
         with:
           name: build_artifacts
           path: |
-            object_trace_visualizer/dist/launch_viewer_webview.exe
-            object_trace_visualizer/build/
-            object_trace_visualizer/*.spec
+            dist/launch_viewer_webview.exe
+            build/
+            *.spec
