@@ -30,7 +30,7 @@ jobs:
         run: |
           .\.venv\Scripts\Activate.ps1
           # Change directory to the workspace
-          Set-Location $env:GITHUB_WORKSPACE
+          Set-Location $env:GITHUB_WORKSPACE\object_trace_visualizer
           Remove-Item -Recurse -Force .\build, .\dist, .\*.spec -ErrorAction SilentlyContinue
           pyinstaller --clean --onefile --console --add-data "viewer;viewer" launch_viewer_webview.py
 
