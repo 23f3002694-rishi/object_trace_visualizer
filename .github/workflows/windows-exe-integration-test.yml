@@ -50,7 +50,7 @@ jobs:
             Write-Host "No requirements.txt found, skipping dependency install"
           }
 
-          # Verify correct entrypoint and static assets exist at repo root
+          # Verify actual entrypoint and static assets exist at repo root
           if (-not (Test-Path ".\launch_viewer_webview.py")) {
             Write-Error "Required entrypoint launch_viewer_webview.py not found in repo root. Update workflow to point to your actual launcher script."
             exit 1
@@ -76,6 +76,7 @@ jobs:
             Write-Error "PyInstaller build failed: dist\launch_viewer_webview.exe not found"
             exit 1
           }
+
           Write-Host "✅ Build succeeded, EXE size:" (Get-Item "dist\launch_viewer_webview.exe").Length "bytes"
 
       - name: Run integration test against EXE
@@ -91,7 +92,7 @@ jobs:
           Write-Host "=== Integration Test Log (tail 200) ==="
           Get-Content .\integration_test_with_exe_log.txt -Tail 200
 
-      - name: Upload integration test artifacts
+      - name: Collect integration test artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
