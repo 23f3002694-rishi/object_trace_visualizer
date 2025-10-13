@@ -1,0 +1,48 @@
+name: windows-exe-integration-test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build-and-test-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Create and activate venv
+        shell: powershell
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\Activate.ps1
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+
+      - name: Build EXE with PyInstaller
+        shell: powershell
+        run: |
+          .\.venv\Scripts\Activate.ps1
+          Remove-Item -Recurse -Force .\build, .\dist, .\*.spec -ErrorAction SilentlyContinue
+          pyinstaller --clean --onefile --console --add-data "viewer;viewer" launch_viewer_webview.py
+
+      - name: Run integration test against EXE
+        shell: powershell
+        env:
+          PYTHONUTF8: 1
+        run: |
+          .\.venv\Scripts\Activate.ps1
+          python .\integration_test.py --exe ".\dist\launch_viewer_webview.exe" --port 60031 --no-new-console *> integration_test_with_exe_log.txt
+          Get-Content .\integration_test_with_exe_log.txt -Tail 200
+
+      - name: Upload integration test artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration_test_artifacts
+          path: integration_test_artifacts
