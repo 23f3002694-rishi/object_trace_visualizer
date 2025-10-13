@@ -19,56 +19,41 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Create and activate venv and install PyInstaller
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~\AppData\Local\pip\Cache
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Create and activate venv, install PyInstaller + requirements
         shell: powershell
         run: |
           python -m venv .venv
           .\.venv\Scripts\Activate.ps1
           python -m pip install --upgrade pip
           pip install pyinstaller
+          if (Test-Path requirements.txt) {
+            Write-Host "Installing project requirements..."
+            pip install -r requirements.txt
+          }
 
-      - name: Build EXE with PyInstaller (diagnose)
+      - name: Build EXE with PyInstaller
         shell: powershell
         run: |
           .\.venv\Scripts\Activate.ps1
-
-          Write-Host "PWD = $((Get-Location).Path)"
-          Write-Host "Files at root:"
-          Get-ChildItem -Name
-
-          # Ensure files exist at root
-          if (-not (Test-Path "launch_viewer_webview.py")) {
-            Write-Error "launch_viewer_webview.py not found at repo root"
-            exit 1
-          }
-          if (-not (Test-Path "viewer")) {
-            Write-Error "viewer/ directory not found at repo root"
-            exit 1
-          }
-
-          # Clean old builds
           Remove-Item -Recurse -Force build, dist, *.spec -ErrorAction SilentlyContinue
+          pyinstaller --clean --log-level=DEBUG --onefile --console --add-data "viewer;viewer" --distpath dist --workpath build --specpath . launch_viewer_webview.py *>&1 | Tee-Object pyinstaller_build_log.txt
 
-          # Build EXE
-          pyinstaller --clean --log-level=DEBUG --onefile --console `
-            --add-data "viewer;viewer" `
-            --distpath dist --workpath build --specpath build `
-            launch_viewer_webview.py
-
-          # Show warnings
-          $warn = Get-ChildItem build -Filter "warn-*.txt" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($warn) {
-            Write-Host "=== PyInstaller warn file ==="
-            Get-Content $warn.FullName -Tail 200
-          }
-
-          # Verify EXE
           if (-not (Test-Path "dist\launch_viewer_webview.exe")) {
             Write-Error "Build failed: dist\launch_viewer_webview.exe not found"
             exit 1
           }
           $exe = Get-Item "dist\launch_viewer_webview.exe"
-          Write-Host "✅ Build succeeded: $($exe.Length) bytes"
+          Write-Host "✅ Build succeeded: EXE size $($exe.Length) bytes"
 
       - name: Run integration test against EXE
         shell: powershell
@@ -78,14 +63,12 @@ jobs:
           .\.venv\Scripts\Activate.ps1
           New-Item -ItemType Directory -Path integration_test_artifacts -Force | Out-Null
 
-          python .\integration_test.py `
-            --exe "dist\launch_viewer_webview.exe" `
-            --port 60031 --no-new-console *> integration_test_with_exe_log.txt
+          python .\integration_test.py --exe "dist\launch_viewer_webview.exe" --port 60031 --no-new-console *> integration_test_with_exe_log.txt
 
           Write-Host "=== Integration Test Log (tail 200) ==="
           Get-Content .\integration_test_with_exe_log.txt -Tail 200
 
-      - name: Collect integration test artifacts
+      - name: Upload integration test artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -99,5 +82,6 @@ jobs:
           name: build_artifacts
           path: |
             dist/launch_viewer_webview.exe
+            pyinstaller_build_log.txt
             build/
             *.spec
