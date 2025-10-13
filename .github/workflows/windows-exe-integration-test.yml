@@ -45,11 +45,40 @@ jobs:
         shell: powershell
         run: |
           .\.venv\Scripts\Activate.ps1
+          $ErrorActionPreference = 'Continue'
+
+          Write-Host "PWD = $((Get-Location).Path)"
+          Write-Host "Files at root:"
+          Get-ChildItem -Name
+
+          if (-not (Test-Path "launch_viewer_webview.py")) {
+            Write-Error "launch_viewer_webview.py not found at repo root"
+            exit 1
+          }
+          if (-not (Test-Path "viewer")) {
+            Write-Error "viewer/ directory not found at repo root"
+            exit 1
+          }
+
           Remove-Item -Recurse -Force build, dist, *.spec -ErrorAction SilentlyContinue
-          pyinstaller --clean --log-level=DEBUG --onefile --console --add-data "viewer;viewer" --distpath dist --workpath build --specpath . launch_viewer_webview.py *>&1 | Tee-Object pyinstaller_build_log.txt
+
+          pyinstaller --clean --log-level=DEBUG --onefile --console `
+            --add-data "viewer;viewer" `
+            --distpath dist --workpath build --specpath . `
+            launch_viewer_webview.py 2>&1 | Tee-Object pyinstaller_build_log.txt
+
+          $warn = Get-ChildItem build -Filter "warn-*.txt" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($warn) {
+            Write-Host "=== PyInstaller warn file (tail 200) ==="
+            Get-Content $warn.FullName -Tail 200
+          }
 
           if (-not (Test-Path "dist\launch_viewer_webview.exe")) {
             Write-Error "Build failed: dist\launch_viewer_webview.exe not found"
+            if (Test-Path "pyinstaller_build_log.txt") {
+              Write-Host "=== PyInstaller build log (tail 200) ==="
+              Get-Content .\pyinstaller_build_log.txt -Tail 200
+            }
             exit 1
           }
           $exe = Get-Item "dist\launch_viewer_webview.exe"
