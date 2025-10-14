@@ -112,6 +112,7 @@ jobs:
         shell: powershell
         env:
           PYTHONUTF8: 1
+          PYTHONIOENCODING: utf-8
         run: |
           .\.venv\Scripts\Activate.ps1
           New-Item -ItemType Directory -Path integration_test_artifacts -Force | Out-Null
@@ -120,5 +121,8 @@ jobs:
             Write-Error "integration_test.py not found - cannot run integration test"
             exit 1
           }
+          
+          python .\integration_test.py --exe "dist\launch_viewer_webview.exe" --port 60031 --no-new-console *> integration_test_with_exe_log.txt
 
-          python
+          Write-Host "=== Integration Test Log (tail 200) ==="
+          Get-Content .\integration_test_with_exe_log.txt -Tail 200
