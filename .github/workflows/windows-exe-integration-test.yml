@@ -62,7 +62,7 @@ jobs:
 
           Remove-Item -Recurse -Force build, dist, *.spec -ErrorAction SilentlyContinue
 
-          pyinstaller --clean --log-level=DEBUG --onefile --console `
+          python -m PyInstaller --clean --log-level=DEBUG --onefile --console `
             --add-data "viewer;viewer" `
             --distpath dist --workpath build --specpath . `
             launch_viewer_webview.py 2>&1 | Tee-Object pyinstaller_build_log.txt
@@ -84,6 +84,30 @@ jobs:
           $exe = Get-Item "dist\launch_viewer_webview.exe"
           Write-Host "✅ Build succeeded: EXE size $($exe.Length) bytes"
 
+      - name: Debug - Check for integration_test.py
+        shell: powershell
+        run: |
+          Write-Host "Current directory: $(Get-Location)"
+          Write-Host "=== ALL Files at root level ==="
+          Get-ChildItem -Name | Sort-Object
+          Write-Host ""
+          Write-Host "=== Looking specifically for integration_test.py ==="
+          $testExists = Test-Path ".\integration_test.py"
+          Write-Host "Test-Path result: $testExists"
+          if ($testExists) {
+            Write-Host "✅ integration_test.py EXISTS"
+            $testFile = Get-Item ".\integration_test.py"
+            Write-Host "File size: $($testFile.Length) bytes"
+            Write-Host "Last modified: $($testFile.LastWriteTime)"
+          } else {
+            Write-Host "❌ integration_test.py NOT FOUND"
+            Write-Host ""
+            Write-Host "=== Searching for integration_test.py recursively ==="
+            Get-ChildItem -Recurse -Name -Filter "*integration_test*" | ForEach-Object { 
+              Write-Host "Found: $_"
+            }
+          }
+
       - name: Run integration test against EXE
         shell: powershell
         env:
@@ -92,25 +116,9 @@ jobs:
           .\.venv\Scripts\Activate.ps1
           New-Item -ItemType Directory -Path integration_test_artifacts -Force | Out-Null
 
-          python .\integration_test.py --exe "dist\launch_viewer_webview.exe" --port 60031 --no-new-console *> integration_test_with_exe_log.txt
+          if (-not (Test-Path ".\integration_test.py")) {
+            Write-Error "integration_test.py not found - cannot run integration test"
+            exit 1
+          }
 
-          Write-Host "=== Integration Test Log (tail 200) ==="
-          Get-Content .\integration_test_with_exe_log.txt -Tail 200
-
-      - name: Upload integration test artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: integration_test_artifacts
-          path: integration_test_artifacts/
-
-      - name: Upload build artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build_artifacts
-          path: |
-            dist/launch_viewer_webview.exe
-            pyinstaller_build_log.txt
-            build/
-            *.spec
+          python
