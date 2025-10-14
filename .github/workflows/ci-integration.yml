@@ -1,0 +1,137 @@
+name: CI Build & Integration Test
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  # Base port for deterministic port allocation per run (adds run_number)
+  BASE_PORT: 60000
+
+jobs:
+  build-and-test-windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Create and activate venv, install build deps
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m venv .venv
+          .\.venv\Scripts\Activate.ps1
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          if (Test-Path requirements.txt) {
+            pip install -r requirements.txt
+          }
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: v1-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            v1-pip-
+
+      - name: Prepare viewer directory
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path viewer)) { New-Item -ItemType Directory -Path viewer | Out-Null }
+          $htmlPath = "viewer/timeline_viewer.html"
+          if (-not (Test-Path $htmlPath)) {
+            @"
+          <!DOCTYPE html>
+          <html><head><meta charset='utf-8'><title>Timeline Viewer</title></head>
+          <body><h1>Timeline Viewer Test Page</h1></body></html>
+          "@ | Out-File -FilePath $htmlPath -Encoding UTF8
+          }
+
+      - name: Build EXE with PyInstaller
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          .\.venv\Scripts\Activate.ps1
+          Write-Host "Building with PyInstaller..."
+          pyinstaller --clean --onefile --console --add-data "viewer;viewer" launch_viewer_webview.py
+          if (-not (Test-Path "dist/launch_viewer_webview.exe")) {
+            Write-Error "PyInstaller build failed - EXE not found"
+            exit 1
+          }
+          Write-Host "Build successful: $(Get-Item dist/launch_viewer_webview.exe | Select-Object Length)"
+
+      - name: Determine test port
+        id: port
+        shell: pwsh
+        run: |
+          # Choose port deterministically per run to reduce collisions
+          $base = ${env:BASE_PORT}
+          $run = "${{ github.run_number }}"
+          $port = [int]$base + [int]$run % 1000
+          Write-Host "Selected port: $port"
+          echo "port=$port" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
+
+      - name: Run integration test
+        shell: pwsh
+        env:
+          PATH: .\.venv\Scripts;${{ env.PATH }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host "Starting integration test..."
+          python integration_test.py --exe dist/launch_viewer_webview.exe --port ${{ steps.port.outputs.port }} --no-new-console
+        timeout-minutes: 20
+        continue-on-error: false
+
+      - name: Show launcher tail on failure
+        if: failure()
+        shell: pwsh
+        run: |
+          if (Test-Path integration_test_artifacts/launcher_stdout.txt) {
+            Write-Host "=== Launcher stdout (tail 400) ==="
+            Get-Content integration_test_artifacts/launcher_stdout.txt -Tail 400 | ForEach-Object { Write-Host $_ }
+          } else {
+            Write-Host "No launcher log found."
+          }
+
+      - name: Upload integration test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-artifacts-${{ github.run_number }}
+          path: integration_test_artifacts/
+          retention-days: 7
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts-${{ github.run_number }}
+          path: |
+            dist/launch_viewer_webview.exe
+            build/
+            *.spec
+          retention-days: 30
+
+      - name: Test summary
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host "=== BUILD SUMMARY ==="
+          Write-Host "Commit: ${{ github.sha }}"
+          Write-Host "Branch: ${{ github.ref_name }}"
+          if (Test-Path "dist/launch_viewer_webview.exe") {
+            $exe = Get-Item "dist/launch_viewer_webview.exe"
+            Write-Host "EXE Size: $($exe.Length) bytes"
+            Write-Host "EXE Modified: $($exe.LastWriteTime)"
+          }
+          Write-Host "====================="
