@@ -31,7 +31,7 @@ jobs:
           python -m venv .venv
           .\.venv\Scripts\Activate.ps1
           python -m pip install --upgrade pip
-          pip install pyinstaller
+          pip install pyinstaller flake8 pytest
           if (Test-Path requirements.txt) {
             pip install -r requirements.txt
           }
@@ -56,6 +56,18 @@ jobs:
           <body><h1>Timeline Viewer Test Page</h1></body></html>
           "@ | Out-File -FilePath $htmlPath -Encoding UTF8
           }
+
+      - name: Run linter (flake8)
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\Activate.ps1
+          flake8 .
+
+      - name: Run unit tests (pytest)
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\Activate.ps1
+          pytest    
 
       - name: Build EXE with PyInstaller
         shell: pwsh
