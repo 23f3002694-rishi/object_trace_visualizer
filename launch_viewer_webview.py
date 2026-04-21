@@ -162,6 +162,17 @@ def start_server(serve_dir: str, preferred_port: Optional[int]) -> Tuple[Stoppab
 
 # ---- Browser launch helpers -----------------------------------------------
 
+def should_launch_browser():
+    # Skip browser in CI
+    if os.environ.get("CI") == "true":
+        return False
+
+    # Skip browser if no display (Linux headless)
+    if sys.platform.startswith("linux") and not os.environ.get("DISPLAY"):
+        return False
+
+    return True
+
 def find_chrome_like() -> Optional[str]:
     candidates = [
         r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
@@ -319,9 +330,11 @@ def run_and_block(serve_dir: str, lock_path: Optional[str], preferred_port: Opti
         if _shutdown_requested:
             return False
 
-        proc, profile = (
-            launch_browser_in_new_terminal(url, use_new_console)
-        )
+        if should_launch_browser():
+            proc, profile = launch_browser_in_new_terminal(url, use_new_console)
+        else:
+            log("Headless/CI environment detected; skipping browser launch.")
+            proc, profile = None, None
 
         try:
             if proc:
