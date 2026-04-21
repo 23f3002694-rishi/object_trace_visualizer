@@ -90,7 +90,7 @@ def wait_for_http_ok(url, timeout=POLL_TIMEOUT):
                 if health_data.get("status") == "ok":
                     main_resp = urllib.request.urlopen(url, timeout=2.0)
                     if main_resp.status == 200:
-                        print("✓ Both endpoints OK")
+                        print("[OK] Both endpoints OK")
                         return True
                     last_error = f"Main page returned {main_resp.status}"
                 else:
@@ -100,7 +100,7 @@ def wait_for_http_ok(url, timeout=POLL_TIMEOUT):
         except Exception as e:
             last_error = str(e)
         time.sleep(POLL_INTERVAL)
-    print(f"✗ HTTP endpoints failed within {timeout}s. Last error: {last_error}")
+    print(f"[FAIL] HTTP endpoints failed within {timeout}s. Last error: {last_error}")
     return False
 
 def extract_url_from_logs(log_file, timeout=URL_DETECTION_TIMEOUT):
@@ -121,12 +121,12 @@ def extract_url_from_logs(log_file, timeout=URL_DETECTION_TIMEOUT):
                 m = re.search(pattern, txt)
                 if m:
                     url = m.group(1)
-                    print(f"✓ Found URL via {label}: {url}")
+                    print(f"[OK] Found URL via {label}: {url}")
                     return url
         except Exception as e:
             print(f"Error reading log file: {e}")
         time.sleep(0.2)
-    print("✗ Failed to locate viewer URL in logs")
+    print("[FAIL] Failed to locate viewer URL in logs")
     return None
 
 def extract_browser_pid_from_logs(log_file):
@@ -138,12 +138,12 @@ def extract_browser_pid_from_logs(log_file):
                 m = re.search(r"Launched browser:.*?\(pid=(\d+)\)", line)
                 if m:
                     pid = int(m.group(1))
-                    print(f"✓ Found browser PID: {pid}")
+                    print(f"[OK] Found browser PID: {pid}")
                     return pid
-        print("✗ No browser PID found")
+        print("[FAIL] No browser PID found")
         return None
     except Exception as e:
-        print(f"Error extracting browser PID: {e}")
+        print(f"[FAIL] Error extracting browser PID: {e}")
         return None
 
 def kill_browser_process(browser_pid):
@@ -157,9 +157,9 @@ def kill_browser_process(browser_pid):
                 capture_output=True, text=True, timeout=BROWSER_KILL_TIMEOUT
             )
             if result.returncode == 0:
-                print("✓ Browser killed")
+                print("[OK] Browser killed")
                 return True
-            print(f"✗ taskkill failed: {result.stderr.strip()}")
+            print(f"[FAIL] taskkill failed: {result.stderr.strip()}")
             return False
         else:
             os.kill(browser_pid, signal.SIGTERM)
@@ -167,12 +167,12 @@ def kill_browser_process(browser_pid):
             try:
                 os.kill(browser_pid, 0)
                 os.kill(browser_pid, signal.SIGKILL)
-                print("✓ Browser force-killed")
+                print("[OK] Browser force-killed")
             except ProcessLookupError:
-                print("✓ Browser terminated gracefully")
+                print("[OK] Browser terminated gracefully")
             return True
     except Exception as e:
-        print(f"✗ Failed to kill browser: {e}")
+        print(f"[FAIL] Failed to kill browser: {e}")
         return False
 
 def stream_output_to_file(process, log_file):
@@ -188,7 +188,7 @@ def stream_output_to_file(process, log_file):
                     f.flush()
                     print(f"[LAUNCHER] {line.rstrip()}")
     except Exception as e:
-        print(f"Error streaming output: {e}")
+        print(f"[FAIL] Error streaming output: {e}")
 
 def build_launcher_command(args):
     if args.script:
@@ -210,7 +210,7 @@ def main():
     log_file = os.path.join(ARTIFACT_DIR, "launcher_stdout.txt")
 
     if not os.path.exists(exe_path):
-        print(f"✗ Executable not found: {exe_path}")
+        print(f"[FAIL] Executable not found: {exe_path}")
         sys.exit(2)
 
     cmd = build_launcher_command(args)
@@ -218,7 +218,7 @@ def main():
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     except Exception as e:
-        print(f"✗ Failed to start launcher: {e}")
+        print(f"[FAIL] Failed to start launcher: {e}")
         dump_diagnostics(exe_path, log_file)
         sys.exit(2)
 
@@ -233,20 +233,20 @@ def main():
             try:
                 with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
                     print(f.read())
-            except:
+            except Exception:
                 print("Could not read log file")
             proc.terminate(); proc.wait(timeout=5)
             sys.exit(3)
 
         if not test_health_endpoint(url.rsplit('/',1)[0]):
-            print("⚠ Health endpoint test failed, but continuing...")
+            print("[WARN] Health endpoint test failed, but continuing...")
         if not wait_for_http_ok(url):
-            print("✗ Viewer did not respond")
+            print("[FAIL] Viewer did not respond")
             dump_diagnostics(exe_path, log_file)
             proc.terminate(); proc.wait(timeout=5)
             sys.exit(4)
 
-        print("✓ HTTP connectivity successful")
+        print("[OK] HTTP connectivity successful")
         browser_pid = extract_browser_pid_from_logs(log_file)
         browser_killed = kill_browser_process(browser_pid) if browser_pid else False
         if not browser_killed:
@@ -254,20 +254,20 @@ def main():
 
         try:
             exit_code = proc.wait(timeout=LAUNCHER_EXIT_TIMEOUT)
-            print(f"✓ Launcher exited with code: {exit_code}")
+            print(f"[OK] Launcher exited with code: {exit_code}")
             final_exit_code = 0 if exit_code in (0,1) else 1
         except subprocess.TimeoutExpired:
-            print("✗ Launcher did not exit, killing")
+            print("[FAIL] Launcher did not exit, killing")
             proc.kill(); proc.wait(timeout=5)
             final_exit_code = 1
 
     except KeyboardInterrupt:
-        print("✗ Test interrupted")
+        print("[FAIL] Test interrupted")
         proc.terminate(); proc.wait(timeout=5)
         final_exit_code = 130
 
     except Exception as e:
-        print(f"✗ Unexpected error: {e}")
+        print(f"[FAIL] Unexpected error: {e}")
         dump_diagnostics(exe_path, log_file)
         proc.terminate(); proc.wait(timeout=5)
         final_exit_code = 1
@@ -277,7 +277,7 @@ def main():
             proc.kill(); proc.wait(timeout=2)
 
     print(f"\nArtifacts in: {ARTIFACT_DIR}\nLog file: {log_file}")
-    print("🎉 Test passed!" if final_exit_code == 0 else "💥 Test failed!")
+    print("SUCCESS: Test passed!" if final_exit_code == 0 else "FAILED: Test failed!")
     sys.exit(final_exit_code)
 
 if __name__ == "__main__":
