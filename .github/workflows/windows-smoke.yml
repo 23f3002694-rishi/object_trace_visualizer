@@ -160,13 +160,30 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Running smoke tests"
+
           python -c "print('Python execution test passed')"
-          try {
-            Invoke-WebRequest http://localhost:8000 -UseBasicParsing -TimeoutSec 5 | Out-Null
-            Write-Host "HTTP server connectivity test passed"
-          } catch {
-            Write-Warning "HTTP server test failed"
+
+          Write-Host "Waiting for HTTP server..."
+
+          $maxAttempts = 10
+          $success = $false
+
+          for ($i = 0; $i -lt $maxAttempts; $i++) {
+            try {
+              Invoke-WebRequest http://localhost:8000 -UseBasicParsing -TimeoutSec 5 | Out-Null
+              $success = $true
+              break
+            } catch {
+              Start-Sleep -Seconds 1
+            }
           }
+
+          if ($success) {
+            Write-Host "HTTP server is responsive"
+          } else {
+            Write-Warning "HTTP server did not respond after $maxAttempts attempts"
+          }
+
           try {
             ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=duration=1:size=320x240:rate=1 -f null - | Out-Null
             Write-Host "FFmpeg functionality test passed"

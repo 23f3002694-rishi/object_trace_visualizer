@@ -97,6 +97,8 @@ jobs:
         shell: pwsh
         env:
           PATH: .\.venv\Scripts;${{ env.PATH }}
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: "utf-8"
         run: |
           $ErrorActionPreference = 'Stop'
           Write-Host "Starting integration test..."
