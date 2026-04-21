@@ -100,7 +100,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Write-Host "Starting integration test..."
-          python integration_test.py --exe dist/launch_viewer_webview.exe --port ${{ steps.port.outputs.port }} --no-new-console
+          python integration_runner.py --exe dist/launch_viewer_webview.exe --port ${{ steps.port.outputs.port }} --no-new-console
         timeout-minutes: 20
         continue-on-error: false
 
