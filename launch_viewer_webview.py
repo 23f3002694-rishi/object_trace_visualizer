@@ -308,7 +308,9 @@ def run_and_block(serve_dir: str, lock_path: Optional[str], preferred_port: Opti
     try:
         log(f"Starting HTTP server for directory: {serve_dir}")
         server, thread, port = start_server(serve_dir, preferred_port)
-        url = f"http://{HOST}:{port}/timeline_viewer.html"
+        url = (
+            f"http://{HOST}:{port}/timeline_viewer.html"
+        )
 
         # Print machine-friendly line for integration tests to parse
         print(f"VIEWER_URL={url}", flush=True)
@@ -317,7 +319,9 @@ def run_and_block(serve_dir: str, lock_path: Optional[str], preferred_port: Opti
         if _shutdown_requested:
             return False
 
-        proc, profile = launch_browser_in_new_terminal(url, use_new_console)
+        proc, profile = (
+            launch_browser_in_new_terminal(url, use_new_console)
+        )
 
         try:
             if proc:
@@ -415,7 +419,7 @@ def main(argv: Optional[list] = None) -> int:
     except Exception as e:
         log("Error locating serve_dir:", e)
         return 2
-    
+
     # Fail fast if serve_dir is missing or not a directory (clearer than FileNotFoundError later)
     if not os.path.isdir(serve_dir):
         log("ERROR: viewer directory not found at %s" % serve_dir)
@@ -434,7 +438,12 @@ def main(argv: Optional[list] = None) -> int:
         log(f"Requested port: {args.port}")
     log(f"Use new console for browser: {not args.no_new_console}")
 
-    ok = run_and_block(serve_dir, lock_path=lock_path, preferred_port=args.port, use_new_console=not args.no_new_console)
+    ok = run_and_block(
+        serve_dir, 
+        lock_path=lock_path, 
+        preferred_port=args.port, 
+        use_new_console=not args.no_new_console,
+    )
     if ok:
         log("Viewer session finished successfully.")
         return 0
